@@ -1,0 +1,30 @@
+{
+  "name": "@lifeos/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup && mkdir -p dist/drizzle && cp -R ../../packages/db/drizzle/. dist/drizzle/",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "latest",
+    "@fastify/swagger": "latest",
+    "@fastify/swagger-ui": "latest",
+    "@lifeos/ai": "workspace:*",
+    "@lifeos/contracts": "workspace:*",
+    "@lifeos/db": "workspace:*",
+    "@lifeos/domain": "workspace:*",
+    "better-sqlite3": "13.0.3",
+    "fastify": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "tsx": "latest",
+    "tsup": "latest",
+    "vitest": "latest"
+  }
+}

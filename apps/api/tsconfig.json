@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@lifeos/contracts": ["../../packages/contracts/src/index.ts"],
+      "@lifeos/domain": ["../../packages/domain/src/index.ts"],
+      "@lifeos/db": ["../../packages/db/src/index.ts"],
+      "@lifeos/ai": ["../../packages/ai/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

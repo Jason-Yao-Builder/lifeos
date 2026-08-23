@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@lifeos/contracts": ["./packages/contracts/src/index.ts"],
+      "@lifeos/domain": ["./packages/domain/src/index.ts"],
+      "@lifeos/db": ["./packages/db/src/index.ts"],
+      "@lifeos/ai": ["./packages/ai/src/index.ts"]
+    }
+  }
+}
