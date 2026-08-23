@@ -1,5 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { ResourceNotFoundError, actorFor, docs, omitUndefined, parseWith } from '../http.js';
+import {
+  ResourceNotFoundError,
+  actorFor,
+  docs,
+  omitUndefined,
+  parseWith,
+  tasksForAiContext,
+} from '../http.js';
 import {
   AddMessageBodySchema,
   AiChatReplySchema,
@@ -48,7 +55,11 @@ export function conversationRoutes(
       }
 
       const history = dependencies.store.conversations.listMessages(id);
-      const tasks = dependencies.store.tasks.list({ tenantId: dependencies.tenantId, limit: 500 });
+      const tasks = tasksForAiContext(
+        dependencies.store,
+        dependencies.tenantId,
+        dependencies.store.tasks.list({ tenantId: dependencies.tenantId, limit: 500 }),
+      );
       const nextMessages: Array<{
         role: 'system' | 'user' | 'assistant';
         content: string;

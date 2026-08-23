@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gte, inArray, isNull, like, lte, max, or, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, like, lte, max, or, type SQL } from 'drizzle-orm';
 import { InvalidMutationError, NotFoundError, VersionConflictError } from '../errors.js';
 import { encodeJson } from '../json.js';
 import { events, tasks } from '../schema.js';
@@ -204,13 +204,18 @@ export function createTaskOperations(runtime: StoreRuntime): TaskOperations {
         if (new Set(orderedIds).size !== orderedIds.length) {
           throw new InvalidMutationError('Task reorder contains duplicate ids');
         }
-        const rows = orderedIds.length === 0
-          ? []
-          : tx.select().from(tasks).where(and(eq(tasks.workspaceId, tenantId), inArray(tasks.id, orderedIds), isNull(tasks.deletedAt))).all();
-        if (rows.length !== orderedIds.length) {
-          throw new InvalidMutationError('Task reorder contains an unknown task');
-        }
+        const rows = tx
+          .select()
+          .from(tasks)
+          .where(and(eq(tasks.workspaceId, tenantId), isNull(tasks.deletedAt)))
+          .all();
         const byId = new Map(rows.map((row) => [row.id, row]));
+        if (
+          rows.length !== orderedIds.length ||
+          orderedIds.some((id) => !byId.has(id))
+        ) {
+          throw new InvalidMutationError('Task reorder must contain every active task exactly once');
+        }
         return orderedIds.map((id, rank) => {
           const beforeRow = byId.get(id)!;
           const updated = tx.update(tasks).set({ rank, version: beforeRow.version + 1, updatedAt: runtime.now().toISOString() }).where(and(eq(tasks.id, id), eq(tasks.version, beforeRow.version))).returning().get();

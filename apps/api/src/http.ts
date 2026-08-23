@@ -1,8 +1,14 @@
-import { ApiErrorSchema, TaskDtoSchema, TaskRecordSchema, type TaskDto } from '@lifeos/contracts';
+import {
+  ApiErrorSchema,
+  TaskDtoSchema,
+  TaskRecordSchema,
+  type TaskDto,
+  type TaskRecord,
+} from '@lifeos/contracts';
 import { DomainValidationError, InvalidTransitionError, getTaskHardness } from '@lifeos/domain';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { ZodError, type ZodType } from 'zod';
-import type { ActorInput } from './services.js';
+import type { ActorInput, ApiStore } from './services.js';
 
 export function parseWith<T>(schema: ZodType<T>, value: unknown): T {
   return schema.parse(value);
@@ -19,6 +25,35 @@ export function omitUndefined<T extends object>(value: T): {
 export function projectTask(value: unknown): TaskDto {
   const task = TaskRecordSchema.parse(value);
   return TaskDtoSchema.parse({ ...task, hardness: getTaskHardness(task) });
+}
+
+export function taskWasManuallyScored(
+  store: ApiStore,
+  tenantId: string,
+  taskId: string,
+): boolean {
+  const created = store.tasks
+    .events(tenantId, taskId)
+    .find((event) => event.type === 'task.created');
+  const after = created?.after;
+  return Boolean(
+    after &&
+    typeof after === 'object' &&
+    !Array.isArray(after) &&
+    (after as Record<string, unknown>).scoreDimensions != null,
+  );
+}
+
+export function tasksForAiContext(
+  store: ApiStore,
+  tenantId: string,
+  tasks: TaskRecord[],
+): TaskRecord[] {
+  return tasks.map((task) =>
+    taskWasManuallyScored(store, tenantId, task.id)
+      ? task
+      : { ...task, scoreDimensions: null, score: null },
+  );
 }
 
 export function actorFor(request: FastifyRequest, type: ActorInput['type'] = 'human'): ActorInput {

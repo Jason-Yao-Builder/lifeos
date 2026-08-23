@@ -19,3 +19,18 @@ export function CoachIcon({ className = "" }: CoachIconProps): ReactElement {
     </svg>
   );
 }
+
+export function SettingsIcon({ className = "" }: CoachIconProps): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className={`settings-icon ${className}`.trim()}
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5 7 7M17 17l1.5 1.5M18.5 5.5 17 7M7 17l-1.5 1.5" />
+      <circle cx="12" cy="12" r="7" />
+    </svg>
+  );
+}

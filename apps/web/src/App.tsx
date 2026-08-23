@@ -3,13 +3,13 @@ import type { ReactElement } from "react";
 import { createApi, hasConfiguredApi } from "./api";
 import type { LifeOSApi } from "./api";
 import { AiDrawer, RulesDrawer, TaskDrawer } from "./Drawers";
-import { CoachIcon } from "./Icons";
+import { CoachIcon, SettingsIcon } from "./Icons";
 import { TaskBoard } from "./TaskBoard";
 import type { TaskFilters } from "./TaskBoard";
 import type { AiCard, CreateTask, Rule, Task, UpdateTask } from "./types";
 import { todayKey } from "./utils";
 
-type View = "tasks" | "today";
+type View = "tasks" | "today" | "views" | "settings";
 type LoadState = "loading" | "ready" | "error";
 
 const emptyFilters: TaskFilters = {
@@ -19,7 +19,10 @@ const emptyFilters: TaskFilters = {
 };
 
 function initialView(): View {
-  return window.location.pathname.endsWith("/today") ? "today" : "tasks";
+  if (window.location.pathname.endsWith("/today")) return "today";
+  if (window.location.pathname.endsWith("/views")) return "views";
+  if (window.location.pathname.endsWith("/settings")) return "settings";
+  return "tasks";
 }
 
 function replaceTask(items: Task[], next: Task): Task[] {
@@ -83,7 +86,7 @@ export function App(): ReactElement {
       setTodayTasks(
         [...dayItems, ...completedToday.filter(
           (task) => !dayItems.some((item) => item.id === task.id),
-        )],
+        )].sort((left, right) => left.rank - right.rank),
       );
       setCards(cardResult.status === "fulfilled" ? cardResult.value : []);
       setRules(ruleResult.status === "fulfilled" ? ruleResult.value : []);
@@ -126,7 +129,13 @@ export function App(): ReactElement {
   function navigate(next: View): void {
     setView(next);
     setFilters(emptyFilters);
-    const path = next === "today" ? "/today" : "/tasks";
+    const path = next === "today"
+      ? "/today"
+      : next === "views"
+        ? "/views"
+        : next === "settings"
+          ? "/settings"
+          : "/tasks";
     window.history.pushState({}, "", path);
   }
 
@@ -182,21 +191,48 @@ export function App(): ReactElement {
   }
 
   async function reorderTasks(sourceId: string, targetId: string): Promise<void> {
-    const sourceIndex = tasks.findIndex((task) => task.id === sourceId);
-    const targetIndex = tasks.findIndex((task) => task.id === targetId);
+    const scope = view === "today" ? todayTasks : tasks;
+    const sourceIndex = scope.findIndex((task) => task.id === sourceId);
+    const targetIndex = scope.findIndex((task) => task.id === targetId);
     if (sourceIndex < 0 || targetIndex < 0) return;
-    const previous = tasks;
-    const reordered = [...tasks];
-    const [moved] = reordered.splice(sourceIndex, 1);
+    const previousTasks = tasks;
+    const previousToday = todayTasks;
+    const reorderedScope = [...scope];
+    const [moved] = reorderedScope.splice(sourceIndex, 1);
     if (!moved) return;
-    reordered.splice(targetIndex, 0, moved);
+    reorderedScope.splice(targetIndex, 0, moved);
+
+    let reordered = reorderedScope;
+    if (view === "today") {
+      const todayIds = new Set(scope.map((task) => task.id));
+      let nextTodayIndex = 0;
+      reordered = tasks.map((task) =>
+        todayIds.has(task.id) ? reorderedScope[nextTodayIndex++] ?? task : task,
+      );
+    }
+
     const ranked = reordered.map((task, index) => ({ ...task, rank: index }));
+    const optimisticById = new Map(ranked.map((task) => [task.id, task]));
     setTasks(ranked);
+    setTodayTasks((current) =>
+      current
+        .map((task) => optimisticById.get(task.id) ?? task)
+        .sort((left, right) => left.rank - right.rank),
+    );
     try {
-      await api.reorderTasks(ranked.map((task) => task.id));
+      const saved = await api.reorderTasks(ranked.map((task) => task.id));
+      const sorted = [...saved].sort((left, right) => left.rank - right.rank);
+      const savedById = new Map(sorted.map((task) => [task.id, task]));
+      setTasks(sorted);
+      setTodayTasks((current) =>
+        current
+          .map((task) => savedById.get(task.id) ?? task)
+          .sort((left, right) => left.rank - right.rank),
+      );
       setToast("顺序已保存");
     } catch {
-      setTasks(previous);
+      setTasks(previousTasks);
+      setTodayTasks(previousToday);
       setToast("排序保存失败，已恢复原顺序");
     }
   }
@@ -375,6 +411,7 @@ export function App(): ReactElement {
           <button
             type="button"
             className={view === "tasks" ? "active" : ""}
+            aria-current={view === "tasks" ? "page" : undefined}
             onClick={() => navigate("tasks")}
           >
             <span aria-hidden="true">☰</span>
@@ -383,24 +420,32 @@ export function App(): ReactElement {
           </button>
           <button
             type="button"
-            className={view === "today" ? "active" : ""}
-            onClick={() => navigate("today")}
+            className={view === "views" ? "active" : ""}
+            aria-current={view === "views" ? "page" : undefined}
+            onClick={() => navigate("views")}
           >
-            <span aria-hidden="true">▣</span>
-            <span>今天</span>
-            <small>{todayTasks.length}</small>
+            <span aria-hidden="true">▦</span>
+            <span>视图</span>
           </button>
         </nav>
         <div className="sidebar-section">
           <span className="sidebar-label">协同</span>
           <button type="button" className="sidebar-link" onClick={() => setAiOpen(true)}>
             <span><CoachIcon /></span>
-            <span>AI 建议</span>
+            <span>AI 教练</span>
             {pendingCards > 0 && <small className="nav-badge">{pendingCards}</small>}
           </button>
-          <button type="button" className="sidebar-link" onClick={() => setRulesOpen(true)}>
-            <span aria-hidden="true">⌘</span>
-            <span>自动规则</span>
+        </div>
+        <div className="sidebar-section">
+          <span className="sidebar-label">系统</span>
+          <button
+            type="button"
+            className={`sidebar-link ${view === "settings" ? "active" : ""}`}
+            aria-current={view === "settings" ? "page" : undefined}
+            onClick={() => navigate("settings")}
+          >
+            <span><SettingsIcon /></span>
+            <span>设置</span>
           </button>
         </div>
         <div className="temperature-key">
@@ -427,7 +472,6 @@ export function App(): ReactElement {
           <div className="brand compact"><span className="brand-mark"><i /></span><strong>LifeOS</strong></div>
           <div>
             <button className="icon-button" onClick={() => setAiOpen(true)} aria-label="AI 教练建议"><CoachIcon /></button>
-            <button className="icon-button" onClick={() => setRulesOpen(true)} aria-label="规则">⌘</button>
           </div>
         </div>
         {loadState === "loading" && (
@@ -454,7 +498,7 @@ export function App(): ReactElement {
             <small>API: /api/v1/tasks</small>
           </section>
         )}
-        {loadState === "ready" && (
+        {loadState === "ready" && (view === "tasks" || view === "today") && (
           <TaskBoard
             view={view}
             tasks={visibleTasks}
@@ -465,23 +509,66 @@ export function App(): ReactElement {
             onUpdate={safeTaskUpdate}
             onOpen={(task) => setSelectedTaskId(task.id)}
             onReorder={reorderTasks}
-            onGenerateSummary={generateSummary}
-            generatingSummary={generatingSummary}
           />
+        )}
+        {loadState === "ready" && view === "views" && (
+          <section className="board views-page" aria-labelledby="views-title">
+            <header className="board-header">
+              <div>
+                <p className="eyebrow">任务呈现</p>
+                <h1 id="views-title">视图</h1>
+              </div>
+            </header>
+          </section>
+        )}
+        {loadState === "ready" && view === "settings" && (
+          <section className="board settings-page">
+            <header className="board-header">
+              <div>
+                <p className="eyebrow">管理 LifeOS 的工作方式</p>
+                <h1>设置</h1>
+                <p className="board-subtitle">自动化、数据与偏好都从这里进入。</p>
+              </div>
+            </header>
+            <div className="settings-page-list">
+              <button type="button" className="settings-item" onClick={() => setRulesOpen(true)}>
+                <span className="settings-item-icon" aria-hidden="true">⌘</span>
+                <span>
+                  <strong>规则</strong>
+                  <small>设置截止升温、滞留观察和周期提醒</small>
+                </span>
+                <i aria-hidden="true">›</i>
+              </button>
+            </div>
+          </section>
         )}
       </main>
 
       <nav className="mobile-nav" aria-label="移动端主导航">
-        <button className={view === "tasks" ? "active" : ""} onClick={() => navigate("tasks")}>
+        <button
+          className={view === "tasks" ? "active" : ""}
+          aria-current={view === "tasks" ? "page" : undefined}
+          onClick={() => navigate("tasks")}
+        >
           <span>☰</span><small>任务</small>
         </button>
-        <button className={view === "today" ? "active" : ""} onClick={() => navigate("today")}>
-          <span>▣</span><small>今天</small>
+        <button
+          className={view === "views" ? "active" : ""}
+          aria-current={view === "views" ? "page" : undefined}
+          onClick={() => navigate("views")}
+        >
+          <span>▦</span><small>视图</small>
         </button>
         <button onClick={() => setAiOpen(true)}>
           <span><CoachIcon /></span><small>AI 教练</small>{pendingCards > 0 && <i>{pendingCards}</i>}
         </button>
-        <button onClick={() => setRulesOpen(true)}><span>⌘</span><small>规则</small></button>
+        <button
+          className={view === "settings" ? "active" : ""}
+          aria-current={view === "settings" ? "page" : undefined}
+          onClick={() => navigate("settings")}
+        >
+          <span><SettingsIcon /></span><small>设置</small>
+        </button>
       </nav>
 
       <TaskDrawer

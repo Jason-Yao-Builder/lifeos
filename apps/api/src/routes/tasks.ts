@@ -3,6 +3,7 @@ import {
   DomainValidationError,
   InvalidTransitionError,
   assertValidTaskInput,
+  calculateTaskScore,
   canTransitionTaskStatus,
   validateUpdateTaskInput,
 } from '@lifeos/domain';
@@ -23,6 +24,7 @@ import {
   omitUndefined,
   parseWith,
   projectTask,
+  taskWasManuallyScored,
 } from '../http.js';
 
 export function taskRoutes(
@@ -40,8 +42,14 @@ export function taskRoutes(
 
     app.post('/tasks', { schema: docs('Create a task', ['tasks']) }, async (request, reply) => {
       const input = assertValidTaskInput(normalizeTaskDeadline(request.body));
-      const created = await dependencies.store.tasks.create(input, actorFor(request));
-      const task = await scoreWithoutBlocking(dependencies, created, request.id);
+      const manualScore = input.scoreDimensions ? calculateTaskScore(input.scoreDimensions).score : null;
+      const created = await dependencies.store.tasks.create(
+        { ...input, score: manualScore },
+        actorFor(request),
+      );
+      const task = input.scoreDimensions
+        ? created
+        : await scoreWithoutBlocking(dependencies, created, request.id);
       return reply.status(201).send(projectTask(task));
     });
 
@@ -86,7 +94,10 @@ export function taskRoutes(
         omitUndefined(validation.data),
         actorFor(request),
       );
-      if (['temperature', 'deadline', 'estimatedMinutes'].some((field) => field in patch)) {
+      if (
+        ['temperature', 'deadline', 'estimatedMinutes'].some((field) => field in patch) &&
+        !taskWasManuallyScored(dependencies.store, dependencies.tenantId, id)
+      ) {
         updated = await scoreWithoutBlocking(dependencies, updated, request.id);
       }
       return projectTask(updated);

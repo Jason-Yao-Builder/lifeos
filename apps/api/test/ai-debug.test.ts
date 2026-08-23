@@ -209,6 +209,89 @@ describe('AI idempotency and debug API', () => {
     expect(listed.json().items[0].score).toBeNull();
   });
 
+  it('keeps manually assigned dimensions when explicit AI scoring runs', async () => {
+    const base = createDeterministicAI();
+    let scoringCalls = 0;
+    harness = await createTestHarness({
+      ai: {
+        ...base,
+        scoreTasks: (tasks) => {
+          scoringCalls += 1;
+          return base.scoreTasks(tasks);
+        },
+      },
+    });
+    const dimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
+    const created = await createTask(harness.app, {
+      title: 'Human priority',
+      scoreDimensions: dimensions,
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/ai/score-tasks',
+      payload: { taskIds: [created.id] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(scoringCalls).toBe(0);
+    expect(response.json().results[0]).toMatchObject({
+      task: { scoreDimensions: dimensions, score: 74.5, version: 1 },
+    });
+  });
+
+  it('keeps only manual scores in summary and coaching context', async () => {
+    const base = createDeterministicAI();
+    let summaryTasks: Parameters<typeof base.dailySummary>[0] = [];
+    let replyTasks: Parameters<typeof base.reply>[0]['tasks'] = [];
+    harness = await createTestHarness({
+      ai: {
+        ...base,
+        dailySummary: (tasks, date) => {
+          summaryTasks = tasks;
+          return base.dailySummary(tasks, date);
+        },
+        reply: (input) => {
+          replyTasks = input.tasks;
+          return base.reply(input);
+        },
+      },
+    });
+    const automatic = await createTask(harness.app, {
+      title: 'Automatic priority',
+      plannedDate: '2026-08-21',
+    });
+    const manual = await createTask(harness.app, {
+      title: 'Manual priority',
+      plannedDate: '2026-08-21',
+      scoreDimensions: { impact: 80, urgency: 60, alignment: 90, effort: 40 },
+    });
+    expect(automatic.score).not.toBeNull();
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/ai/daily-summary',
+      payload: { date: '2026-08-21' },
+    });
+    const conversation = harness.database.store.conversations.create({ title: 'Coach' });
+    await harness.app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversation.id}/messages`,
+      payload: { content: '下一步做什么？' },
+    });
+
+    for (const context of [summaryTasks, replyTasks ?? []]) {
+      expect(context.find((task) => task.id === automatic.id)).toMatchObject({
+        scoreDimensions: null,
+        score: null,
+      });
+      expect(context.find((task) => task.id === manual.id)).toMatchObject({
+        scoreDimensions: manual.scoreDimensions,
+        score: 74.5,
+      });
+    }
+  });
+
   it('rejects missing or unknown score task ids without partial writes', async () => {
     const base = createDeterministicAI();
     harness = await createTestHarness({

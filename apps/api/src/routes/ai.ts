@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { dateTimeToLocalDate } from '@lifeos/domain';
 import type { FastifyPluginAsync } from 'fastify';
-import { ResourceNotFoundError, actorFor, docs, parseWith, projectTask } from '../http.js';
+import {
+  ResourceNotFoundError,
+  actorFor,
+  docs,
+  parseWith,
+  projectTask,
+  taskWasManuallyScored,
+  tasksForAiContext,
+} from '../http.js';
 import {
   AiDailySummarySchema,
   AiTaskScoresSchema,
@@ -42,12 +50,31 @@ export function aiRoutes(
         input: { taskIds: tasks.map((task) => task.id) },
       });
       try {
-        const scores = AiTaskScoresSchema.parse(await dependencies.ai.scoreTasks(tasks));
-        assertScoresMatchTasks(scores, tasks.map((task) => task.id));
+        const manualTaskIds = new Set(
+          tasks
+            .filter((task) => taskWasManuallyScored(
+              dependencies.store,
+              dependencies.tenantId,
+              task.id,
+            ))
+            .map((task) => task.id),
+        );
+        const automaticTasks = tasks.filter((task) => !manualTaskIds.has(task.id));
+        const scores = automaticTasks.length > 0
+          ? AiTaskScoresSchema.parse(await dependencies.ai.scoreTasks(automaticTasks))
+          : [];
+        assertScoresMatchTasks(scores, automaticTasks.map((task) => task.id));
         const scoreById = new Map(scores.map((score) => [score.taskId, score]));
         const updated = dependencies.store.transaction((store) => {
           const results = [];
           for (const task of tasks) {
+            if (manualTaskIds.has(task.id)) {
+              results.push({
+                task: projectTask(task),
+                explanation: '保留创建任务时设定的人工评分。',
+              });
+              continue;
+            }
             const score = scoreById.get(task.id);
             if (!score) continue;
             const record = store.tasks.update(
@@ -62,7 +89,7 @@ export function aiRoutes(
           store.aiRuns.complete(
             dependencies.tenantId,
             run.id,
-            { scores },
+            { scores, manualTaskIds: [...manualTaskIds] },
             'Persisted deterministic task scores',
           );
           return results;
@@ -112,7 +139,11 @@ async function generateDailySummary(
       if (card) return { runId: existing.id, card, reused: true };
     }
   }
-  const tasks = await dependencies.store.tasks.list({ tenantId: dependencies.tenantId, limit: 500 });
+  const tasks = tasksForAiContext(
+    dependencies.store,
+    dependencies.tenantId,
+    await dependencies.store.tasks.list({ tenantId: dependencies.tenantId, limit: 500 }),
+  );
   const claimToken = randomUUID();
   const runInput = { date, requestToken: claimToken };
   const run =

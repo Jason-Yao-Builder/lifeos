@@ -7,6 +7,13 @@ export type TaskStatus =
   | "abandoned";
 export type Hardness = "soft" | "hard";
 
+export interface TaskScoreDimensions {
+  impact: number;
+  urgency: number;
+  alignment: number;
+  effort: number;
+}
+
 export interface TaskEvent {
   id: string;
   taskId: string;
@@ -31,6 +38,7 @@ export interface Task {
   startAt?: string | null;
   endAt?: string | null;
   tags: string[];
+  scoreDimensions?: TaskScoreDimensions | null;
   score: number | null;
   rank: number;
   createdAt: string;
@@ -45,6 +53,7 @@ export interface CreateTask {
   deadline?: string | null;
   plannedDate?: string | null;
   tags?: string[];
+  scoreDimensions?: TaskScoreDimensions | null;
 }
 
 export type UpdateTask = Partial<

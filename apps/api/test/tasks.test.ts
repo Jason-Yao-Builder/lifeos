@@ -81,6 +81,28 @@ describe('task API', () => {
     });
   });
 
+  it('persists manual dimensions and does not replace them with automatic scoring', async () => {
+    const scoreDimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
+    const created = await createTask(harness.app, { title: 'Manual priority', scoreDimensions });
+
+    expect(created).toMatchObject({ scoreDimensions, score: 74.5, version: 1 });
+    const updated = await harness.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tasks/${created.id}`,
+      payload: { version: created.version, patch: { temperature: 'cold' } },
+    });
+    expect(updated.json()).toMatchObject({ scoreDimensions, score: 74.5, version: 2 });
+    const listed = await harness.app.inject({ method: 'GET', url: '/api/v1/tasks' });
+    expect(listed.json().items[0]).toMatchObject({ scoreDimensions, score: 74.5, version: 2 });
+
+    const invalid = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/tasks',
+      payload: { title: 'Invalid manual priority', scoreDimensions: { ...scoreDimensions, impact: 101 } },
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('restores completed and archived tasks to todo without losing history', async () => {
     const created = await createTask(harness.app, { title: 'Reopenable task' });
     let current = { version: created.version, status: created.status, completedAt: created.completedAt };
@@ -137,12 +159,24 @@ describe('task API', () => {
     });
     expect(filtered.json().items.map((task: { id: string }) => task.id)).toEqual([alpha.id]);
 
+    const incompleteReorder = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/reorder',
+      payload: { orderedIds: [beta.id, alpha.id] },
+    });
+    expect(incompleteReorder.statusCode).toBe(400);
+
     const reordered = await harness.app.inject({
       method: 'POST',
       url: '/api/v1/tasks/reorder',
       payload: { orderedIds: [gamma.id, beta.id, alpha.id] },
     });
     expect(reordered.statusCode).toBe(200);
+    expect(reordered.json().items).toEqual([
+      expect.objectContaining({ id: gamma.id, rank: 0, version: gamma.version + 1 }),
+      expect.objectContaining({ id: beta.id, rank: 1, version: beta.version + 1 }),
+      expect.objectContaining({ id: alpha.id, rank: 2, version: alpha.version + 1 }),
+    ]);
     const listed = await harness.app.inject({ method: 'GET', url: '/api/v1/tasks' });
     expect(listed.json().items.map((task: { id: string }) => task.id)).toEqual([
       gamma.id,

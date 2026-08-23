@@ -16,7 +16,11 @@
     "test:watch": "vitest",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "db:migrate": "pnpm --filter @lifeos/db migrate",
-    "db:seed": "pnpm --filter @lifeos/db seed"
+    "db:seed": "pnpm --filter @lifeos/db seed",
+    "data:reset:all": "pnpm --filter @lifeos/db exec tsx ../../scripts/reset/reset-all.ts",
+    "data:reset:task": "pnpm --filter @lifeos/db exec tsx ../../scripts/reset/reset-task.ts",
+    "data:inspect": "pnpm --filter @lifeos/db exec tsx ../../scripts/inspect/status.ts",
+    "data:inspect:task": "pnpm --filter @lifeos/db exec tsx ../../scripts/inspect/task-timeline.ts"
   },
   "devDependencies": {
     "@eslint/js": "latest",

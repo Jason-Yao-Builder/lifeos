@@ -130,7 +130,7 @@ export interface ApiStore {
   tasks: {
     list(filters?: TaskFilters): TaskRecord[];
     get(tenantId: string, id: string): TaskRecord | null;
-    create(input: CreateTaskInput, actor?: ActorInput): TaskRecord;
+    create(input: CreateTaskInput & { score?: number | null }, actor?: ActorInput): TaskRecord;
     update(
       tenantId: string,
       id: string,

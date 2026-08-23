@@ -23,7 +23,14 @@ describe('task contracts', () => {
       startAt: null,
       endAt: null,
       estimatedMinutes: null,
+      scoreDimensions: null,
     });
+  });
+
+  it('accepts bounded manual score dimensions on create', () => {
+    const dimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
+    expect(CreateTaskInputSchema.parse({ title: 'Manual score', scoreDimensions: dimensions }).scoreDimensions).toEqual(dimensions);
+    expect(CreateTaskInputSchema.safeParse({ title: 'Invalid score', scoreDimensions: { ...dimensions, impact: 101 } }).success).toBe(false);
   });
 
   it('rejects duplicate normalized tags, unknown fields, and empty updates', () => {

@@ -1,5 +1,6 @@
 import type { LifeOSApi } from "./api";
 import type { AiCard, Rule, Task, TaskEvent } from "./types";
+import { calculateCompositeScore } from "./utils";
 
 interface DemoStore {
   tasks: Task[];
@@ -281,7 +282,8 @@ export function createDemoApi(): LifeOSApi {
         deadline: input.deadline ?? null,
         plannedDate: input.plannedDate ?? null,
         tags: input.tags ?? [],
-        score: 50,
+        scoreDimensions: input.scoreDimensions ?? null,
+        score: input.scoreDimensions ? calculateCompositeScore(input.scoreDimensions) : 50,
         rank: store.tasks.length,
         createdAt: stamp(),
         updatedAt: stamp(),
@@ -312,13 +314,27 @@ export function createDemoApi(): LifeOSApi {
       return pause(next, 120);
     },
     async reorderTasks(orderedIds) {
+      const knownIds = new Set(store.tasks.map((task) => task.id));
+      if (
+        new Set(orderedIds).size !== orderedIds.length ||
+        orderedIds.length !== store.tasks.length ||
+        orderedIds.some((id) => !knownIds.has(id))
+      ) {
+        throw new Error("排序必须包含全部任务");
+      }
       const rank = new Map(orderedIds.map((id, index) => [id, index]));
-      store.tasks = store.tasks.map((task) => ({
-        ...task,
-        rank: rank.get(task.id) ?? task.rank,
-      }));
+      store.tasks = store.tasks.map((task) => {
+        const next: Task = {
+          ...task,
+          rank: rank.get(task.id) ?? task.rank,
+          version: task.version + 1,
+          updatedAt: stamp(),
+        };
+        addEvent(next, "rank", task.rank, next.rank, "调整任务顺序");
+        return next;
+      });
       saveStore(store);
-      await pause(undefined, 120);
+      return pause([...store.tasks].sort((left, right) => left.rank - right.rank), 120);
     },
     async getTaskEvents(id) {
       return pause(store.events[id] ?? [], 240);

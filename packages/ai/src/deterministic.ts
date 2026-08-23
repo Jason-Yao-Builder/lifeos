@@ -18,6 +18,15 @@ export function createDeterministicAI(options: DeterministicAIOptions = {}): Det
   const defaultStaleDays = options.staleAfterDays ?? 7;
   const timeZone = options.timeZone ?? 'Asia/Shanghai';
   const scoreOne = (task: AITask): TaskScoreResult => calculateScore(task, now());
+  const contextualScore = (task: AITask): TaskScoreResult =>
+    task.scoreDimensions !== null && task.score !== null
+      ? {
+          taskId: task.id,
+          dimensions: task.scoreDimensions,
+          score: task.score,
+          explanation: '采用任务已保存的四维评分。',
+        }
+      : scoreOne(task);
 
   return {
     provider: 'deterministic',
@@ -35,7 +44,7 @@ export function createDeterministicAI(options: DeterministicAIOptions = {}): Det
       );
       const candidates = selectTodayTasks(tasks, { today: date, timeZone });
       const ranked = candidates
-        .map((task) => ({ task, result: scoreOne(task) }))
+        .map((task) => ({ task, result: contextualScore(task) }))
         .sort((a, b) => b.result.score - a.result.score || a.task.rank - b.task.rank);
       const focus = ranked.slice(0, 3);
       const overdue = candidates.filter(
@@ -57,7 +66,7 @@ export function createDeterministicAI(options: DeterministicAIOptions = {}): Det
       };
     },
     reply(input: ChatReplyInput): ChatReplyResult {
-      return reply(input, scoreOne);
+      return reply(input, contextualScore);
     },
     stagnationObservations(tasks, staleAfterDays = defaultStaleDays) {
       return stagnation(tasks, now(), staleAfterDays);

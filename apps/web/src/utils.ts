@@ -1,4 +1,4 @@
-import type { CardType, TaskStatus, Temperature } from "./types";
+import type { CardType, TaskScoreDimensions, TaskStatus, Temperature } from "./types";
 
 export const temperatureLabels: Record<Temperature, string> = {
   hot: "热",
@@ -39,12 +39,22 @@ export function todayKey(): string {
 }
 
 export function openDatePicker(input: HTMLInputElement): void {
-  input.focus();
   try {
-    input.showPicker?.();
+    if (input.showPicker) {
+      input.showPicker();
+    }
   } catch {
-    // Browsers without a programmatic picker still keep the native input usable.
+    // A rejected native picker call must not alter or select a date segment.
   }
+}
+
+export function calculateCompositeScore(dimensions: TaskScoreDimensions): number {
+  const score =
+    dimensions.impact * 0.35 +
+    dimensions.urgency * 0.3 +
+    dimensions.alignment * 0.25 +
+    (100 - dimensions.effort) * 0.1;
+  return Math.round((score + Number.EPSILON) * 100) / 100;
 }
 
 export function mergeTags(current: string[], raw: string): string[] {

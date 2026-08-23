@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent, FormEvent, ReactElement } from "react";
-import type { CreateTask, Task, TaskStatus, Temperature, UpdateTask } from "./types";
+import type { CreateTask, Task, TaskScoreDimensions, TaskStatus, Temperature, UpdateTask } from "./types";
 import {
+  calculateCompositeScore,
   formatLongDate,
   formatShortDate,
   openDatePicker,
@@ -10,6 +11,24 @@ import {
   temperatureLabels,
   todayKey,
 } from "./utils";
+
+const defaultScoreDimensions: TaskScoreDimensions = {
+  impact: 50,
+  urgency: 50,
+  alignment: 50,
+  effort: 50,
+};
+
+const scoreDimensionFields: Array<{
+  key: keyof TaskScoreDimensions;
+  label: string;
+  hint: string;
+}> = [
+  { key: "impact", label: "影响力", hint: "对结果的影响" },
+  { key: "urgency", label: "紧迫度", hint: "时间压力" },
+  { key: "alignment", label: "方向一致性", hint: "与长期方向一致" },
+  { key: "effort", label: "精力成本", hint: "越高越消耗精力" },
+];
 
 export interface TaskFilters {
   temperature: "all" | Temperature;
@@ -27,8 +46,6 @@ interface TaskBoardProps {
   onUpdate: (task: Task, patch: UpdateTask) => Promise<void>;
   onOpen: (task: Task) => void;
   onReorder: (sourceId: string, targetId: string) => Promise<void>;
-  onGenerateSummary: () => Promise<void>;
-  generatingSummary: boolean;
 }
 
 function QuickAdd({
@@ -40,6 +57,9 @@ function QuickAdd({
     view === "today" ? "hot" : "warm",
   );
   const [deadline, setDeadline] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [manualScore, setManualScore] = useState(false);
+  const [scoreDimensions, setScoreDimensions] = useState(defaultScoreDimensions);
   const [saving, setSaving] = useState(false);
   const [invalid, setInvalid] = useState(false);
 
@@ -60,9 +80,13 @@ function QuickAdd({
         temperature,
         deadline: deadline || null,
         plannedDate: view === "today" ? todayKey() : null,
+        ...(manualScore ? { scoreDimensions } : {}),
       });
       setTitle("");
       setDeadline("");
+      setAdvancedOpen(false);
+      setManualScore(false);
+      setScoreDimensions(defaultScoreDimensions);
       setInvalid(false);
     } finally {
       setSaving(false);
@@ -70,7 +94,7 @@ function QuickAdd({
   }
 
   return (
-    <form className={`quick-add ${invalid ? "is-invalid" : ""}`} onSubmit={submit}>
+    <form className={`quick-add ${advancedOpen ? "has-advanced" : ""} ${invalid ? "is-invalid" : ""}`} onSubmit={submit}>
       <span className="quick-add-plus" aria-hidden="true">＋</span>
       <input
         aria-label="新任务标题"
@@ -91,19 +115,87 @@ function QuickAdd({
           <option key={value} value={value}>{label}</option>
         ))}
       </select>
-      <label className="quick-date">
+      <label
+        className="quick-date"
+        onPointerDown={(event) => {
+          const input = event.currentTarget.querySelector("input");
+          if (input?.showPicker) event.preventDefault();
+        }}
+        onClick={(event) => {
+          const input = event.currentTarget.querySelector("input");
+          if (input?.showPicker) {
+            event.preventDefault();
+            openDatePicker(input);
+          }
+        }}
+      >
         <span>截止</span>
         <input
           aria-label="新任务截止日"
           type="date"
           value={deadline}
-          onClick={(event) => openDatePicker(event.currentTarget)}
           onChange={(event) => setDeadline(event.target.value)}
         />
       </label>
       <button className="button button-primary" disabled={saving} type="submit">
         {saving ? "添加中…" : "添加"}
       </button>
+      <button
+        type="button"
+        className="quick-advanced-toggle"
+        aria-expanded={advancedOpen}
+        aria-controls="quick-add-advanced"
+        onClick={() => setAdvancedOpen((current) => !current)}
+      >
+        高级选项 <span aria-hidden="true">⌄</span>
+      </button>
+      {advancedOpen && (
+        <section id="quick-add-advanced" className="quick-advanced" aria-label="新任务高级选项">
+          <header>
+            <div>
+              <strong>优先级评分</strong>
+              <small>不启用时由系统自动评分</small>
+            </div>
+            <label className="manual-score-toggle">
+              <input
+                type="checkbox"
+                checked={manualScore}
+                onChange={(event) => setManualScore(event.target.checked)}
+              />
+              手动设定
+            </label>
+          </header>
+          <fieldset className="score-dimension-grid" disabled={!manualScore}>
+            <legend className="sr-only">四维评分，每项范围为 0 到 100</legend>
+            {scoreDimensionFields.map(({ key, label, hint }) => (
+              <label key={key} htmlFor={`new-task-score-${key}`}>
+                <span>{label}</span>
+                <small id={`new-task-score-${key}-hint`}>{hint}</small>
+                <input
+                  id={`new-task-score-${key}`}
+                  aria-describedby={`new-task-score-${key}-hint`}
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={scoreDimensions[key]}
+                  onChange={(event) => {
+                    const value = Number.isNaN(event.target.valueAsNumber) ? 0 : event.target.valueAsNumber;
+                    setScoreDimensions((current) => ({
+                      ...current,
+                      [key]: Math.min(100, Math.max(0, value)),
+                    }));
+                  }}
+                />
+              </label>
+            ))}
+          </fieldset>
+          <footer className={manualScore ? "active" : ""} aria-live="polite">
+            <span>{manualScore ? "综合分预览" : "自动评分将在创建后生成"}</span>
+            {manualScore && <strong>{calculateCompositeScore(scoreDimensions)}</strong>}
+          </footer>
+        </section>
+      )}
       {invalid && <span className="field-error">先写下任务名称</span>}
     </form>
   );
@@ -170,11 +262,7 @@ function TaskRow({
         disabled={!actionStatus}
         onClick={() => actionStatus && void onUpdate(task, { status: actionStatus })}
       >
-        {task.status === "completed" || task.status === "archived"
-          ? "↺"
-          : task.status === "todo"
-            ? ""
-            : "·"}
+        {task.status === "todo" || done ? "" : "·"}
       </button>
       <button type="button" className="task-summary" onClick={() => onOpen(task)}>
         <span className="task-title-line">
@@ -214,13 +302,25 @@ function TaskRow({
           <option key={value} value={value}>{statusLabels[value]}</option>
         ))}
       </select>
-      <label className="inline-date">
+      <label
+        className="inline-date"
+        onPointerDown={(event) => {
+          const input = event.currentTarget.querySelector("input");
+          if (input?.showPicker) event.preventDefault();
+        }}
+        onClick={(event) => {
+          const input = event.currentTarget.querySelector("input");
+          if (input?.showPicker) {
+            event.preventDefault();
+            openDatePicker(input);
+          }
+        }}
+      >
         <span>计划日</span>
         <input
           aria-label={`${task.title}的计划日`}
           type="date"
           value={task.plannedDate?.slice(0, 10) ?? ""}
-          onClick={(event) => openDatePicker(event.currentTarget)}
           onChange={(event) => void onUpdate(task, { plannedDate: event.target.value || null })}
         />
       </label>
@@ -242,8 +342,6 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     onUpdate,
     onOpen,
     onReorder,
-    onGenerateSummary,
-    generatingSummary,
   } = props;
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const visibleTasks = useMemo(
@@ -258,7 +356,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
   );
   const filterActive =
     filters.temperature !== "all" || filters.status !== "all" || Boolean(filters.tag);
-  const canReorder = view === "tasks" && !filterActive;
+  const canReorder = !filterActive;
   const completed = tasks.filter((task) => task.status === "completed").length;
   const completion = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
 
@@ -391,26 +489,6 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             </button>
           )}
         </div>
-      )}
-
-      {view === "today" && tasks.length > 0 && (
-        <aside className="summary-prompt">
-          <div>
-            <span className="summary-orb" aria-hidden="true">∗</span>
-            <div>
-              <strong>将今天收好</strong>
-              <p>AI 会基于今日的执行与变更，生成一张可编辑的小结卡。</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="button button-dark"
-            disabled={generatingSummary}
-            onClick={() => void onGenerateSummary()}
-          >
-            {generatingSummary ? "正在整理…" : "生成今日小结"}
-          </button>
-        </aside>
       )}
     </section>
   );

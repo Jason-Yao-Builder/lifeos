@@ -17,7 +17,7 @@ export interface LifeOSApi {
   getDay(date: string): Promise<Task[]>;
   createTask(input: CreateTask): Promise<Task>;
   updateTask(id: string, version: number, patch: UpdateTask): Promise<Task>;
-  reorderTasks(orderedIds: string[]): Promise<void>;
+  reorderTasks(orderedIds: string[]): Promise<Task[]>;
   getTaskEvents(id: string): Promise<EventListResponse["items"]>;
   getCards(): Promise<AiCard[]>;
   decideCard(id: string, decision: "accept" | "reject"): Promise<void>;
@@ -151,7 +151,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const httpApi: LifeOSApi = {
   async getTasks() {
-    return itemsOf(await request<Task[] | TaskListResponse>("/tasks"));
+    return itemsOf(await request<Task[] | TaskListResponse>("/tasks?limit=500"));
   },
   async getDay(date) {
     return itemsOf(await request<Task[] | TaskListResponse>(`/days/${date}`));
@@ -170,10 +170,10 @@ const httpApi: LifeOSApi = {
     return "task" in result ? result.task : result;
   },
   async reorderTasks(orderedIds) {
-    await request("/tasks/reorder", {
+    return itemsOf(await request<Task[] | TaskListResponse>("/tasks/reorder", {
       method: "POST",
       body: JSON.stringify({ orderedIds }),
-    });
+    }));
   },
   async getTaskEvents(id) {
     return itemsOf(

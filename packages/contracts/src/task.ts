@@ -56,6 +56,7 @@ export const CreateTaskInputSchema = WritableTaskFieldsSchema.extend({
   startAt: WritableTaskFieldsSchema.shape.startAt.default(null),
   endAt: WritableTaskFieldsSchema.shape.endAt.default(null),
   estimatedMinutes: WritableTaskFieldsSchema.shape.estimatedMinutes.default(null),
+  scoreDimensions: TaskScoreDimensionsSchema.nullable().default(null),
 }).strict();
 export type CreateTaskRequest = z.input<typeof CreateTaskInputSchema>;
 export type CreateTaskInput = z.output<typeof CreateTaskInputSchema>;

@@ -59,6 +59,26 @@ describe('deterministic AI', () => {
     expect(result.explanation).toContain('四维评分');
   });
 
+  it('uses persisted dimensions for summaries and coaching', () => {
+    const manual = task({
+      id: 'manual',
+      title: 'Manual focus',
+      plannedDate: '2026-08-23',
+      temperature: 'cold',
+      scoreDimensions: { impact: 100, urgency: 100, alignment: 100, effort: 0 },
+      score: 100,
+    });
+    const automatic = task({
+      id: 'automatic',
+      title: 'Automatic focus',
+      plannedDate: '2026-08-23',
+      temperature: 'hot',
+    });
+
+    expect(ai.dailySummary([automatic, manual], '2026-08-23').focusTaskIds[0]).toBe('manual');
+    expect(ai.reply({ messages: [{ role: 'user', content: '下一步做什么' }], tasks: [automatic, manual] }).content).toContain('Manual focus');
+  });
+
   it('counts completion by workspace timezone', () => {
     const result = ai.dailySummary([
       task({

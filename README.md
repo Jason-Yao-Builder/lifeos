@@ -42,6 +42,21 @@ pnpm db:seed      # 手动补齐默认工作区、用户和规则
 pnpm build        # 构建 API 与 Web
 ```
 
+## 测试数据维护
+
+维护脚本默认读取 `data/lifeos.db`，也支持 `DATABASE_URL` 或 `--database <path>`。重置命令默认只预览，必须增加 `--confirm` 才会写库。
+
+```bash
+pnpm data:inspect                                  # 全局状态、分布和最近事件
+pnpm data:inspect:task -- --id <task-id>           # 单任务过程时间线
+pnpm data:reset:all                                # 预览全量重置
+pnpm data:reset:all -- --confirm                   # 清空业务状态并恢复三条默认规则
+pnpm data:reset:task -- --id <task-id>             # 预览单任务清理
+pnpm data:reset:task -- --id <task-id> --confirm   # 清理任务及直接关联记录
+```
+
+目录与安全语义见 `scripts/README.md`。选择性清理会保留可能被其他任务共享的 AI 运行批次。
+
 ## 配置
 
 默认配置无需 `.env`。需要覆盖时，以 `.env.example` 为模板导出环境变量后启动。

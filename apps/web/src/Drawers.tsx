@@ -235,21 +235,45 @@ export function TaskDrawer({ task, api, onClose, onSave }: TaskDrawerProps): Rea
                 ))}
               </select>
             </label>
-            <label className="field">
+            <label
+              className="field"
+              onPointerDown={(event) => {
+                const input = event.currentTarget.querySelector("input");
+                if (input?.showPicker) event.preventDefault();
+              }}
+              onClick={(event) => {
+                const input = event.currentTarget.querySelector("input");
+                if (input?.showPicker) {
+                  event.preventDefault();
+                  openDatePicker(input);
+                }
+              }}
+            >
               <span>Deadline <small>设置后即硬任务</small></span>
               <input
                 type="date"
                 value={draft.deadline ?? ""}
-                onClick={(event) => openDatePicker(event.currentTarget)}
                 onChange={(event) => setDraft({ ...draft, deadline: event.target.value || null })}
               />
             </label>
-            <label className="field">
+            <label
+              className="field"
+              onPointerDown={(event) => {
+                const input = event.currentTarget.querySelector("input");
+                if (input?.showPicker) event.preventDefault();
+              }}
+              onClick={(event) => {
+                const input = event.currentTarget.querySelector("input");
+                if (input?.showPicker) {
+                  event.preventDefault();
+                  openDatePicker(input);
+                }
+              }}
+            >
               <span>计划日</span>
               <input
                 type="date"
                 value={draft.plannedDate ?? ""}
-                onClick={(event) => openDatePicker(event.currentTarget)}
                 onChange={(event) => setDraft({ ...draft, plannedDate: event.target.value || null })}
               />
             </label>
@@ -396,7 +420,7 @@ export function AiDrawer({
   return (
     <DrawerShell
       open={open}
-      title={selected ? selected.title : "AI 建议"}
+      title={selected ? selected.title : "AI 教练"}
       eyebrow={selected ? "与这张卡继续聊" : "人做最终决定"}
       wide
       onClose={selected ? () => setSelectedId(null) : onClose}
