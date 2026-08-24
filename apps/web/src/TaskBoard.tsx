@@ -118,7 +118,8 @@ interface TaskBoardProps {
   onViewChange: (view: "tasks" | "today") => void;
   onFiltersChange: (filters: TaskFilters) => void;
   onAdd: (input: CreateTask) => Promise<void>;
-  onUpdate: (task: Task, patch: UpdateTask) => Promise<void>;
+  onUpdate: (task: Task, patch: UpdateTask) => Promise<boolean | void>;
+  completionMotions?: Readonly<Partial<Record<string, TaskCompletionMotion>>>;
   onOpen: (task: Task) => void;
   onReorder: (
     sourceId: string,
@@ -126,6 +127,21 @@ interface TaskBoardProps {
     position: TaskDropPosition,
     scopeIds: string[],
   ) => Promise<void>;
+}
+
+export type TaskCompletionMotion = "exiting" | "entering" | "restoring";
+
+export const taskCompletionMotionDurations: Record<TaskCompletionMotion, number> = {
+  exiting: 520,
+  entering: 360,
+  restoring: 240,
+};
+
+export function taskCompletionMotionDuration(
+  motion: TaskCompletionMotion,
+  reducedMotion: boolean,
+): number {
+  return reducedMotion ? 0 : taskCompletionMotionDurations[motion];
 }
 
 interface QuickAddDraft {
@@ -388,6 +404,7 @@ interface TaskRowProps {
   canReorder: boolean;
   dragging: boolean;
   dropPosition: TaskDropPosition | null;
+  completionMotion: TaskCompletionMotion | null;
   onUpdate: TaskBoardProps["onUpdate"];
   onOpen: TaskBoardProps["onOpen"];
   onToggleChildren: (taskId: string) => void;
@@ -411,6 +428,7 @@ function TaskRow({
   canReorder,
   dragging,
   dropPosition,
+  completionMotion,
   onUpdate,
   onOpen,
   onToggleChildren,
@@ -424,6 +442,9 @@ function TaskRow({
   onKeyboardReorder,
 }: TaskRowProps): ReactElement {
   const done = task.status === "completed" || task.status === "archived";
+  const transitioning = completionMotion !== null;
+  const visualDone = done || completionMotion === "exiting" || completionMotion === "entering";
+  const displayedStatus = completionMotion === "exiting" ? "completed" : task.status;
   const [scoreEditorOpen, setScoreEditorOpen] = useState(false);
   const [scoreDraft, setScoreDraft] = useState<ScoreDimensionDraft>(
     createScoreDimensionDraft(task.scoreDimensions ?? defaultScoreDimensions),
@@ -492,13 +513,14 @@ function TaskRow({
 
   return (
     <article
-      className={`task-row task-depth-${depth} ${hasChildren ? "has-children" : ""} ${done ? "is-complete" : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
+      className={`task-row task-depth-${depth} ${hasChildren ? "has-children" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
       data-task-drop-id={task.id}
       data-task-target-date={targetDate ?? undefined}
       role="treeitem"
       aria-level={depth}
       aria-label={`${task.title}${ancestorPath ? `，隶属 ${ancestorPath}` : ""}${lineageWarning ? `，${lineageWarning}` : ""}${targetDate ? `，目标日期 ${targetDate}` : ""}`}
-      draggable={canReorder && !scoreEditorOpen}
+      aria-busy={transitioning || undefined}
+      draggable={canReorder && !scoreEditorOpen && !transitioning}
       onDragStart={(event) => onDragStart(event, task.id)}
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver(event, task.id)}
@@ -507,6 +529,7 @@ function TaskRow({
       <button
         type="button"
         className="drag-handle"
+        disabled={transitioning}
         aria-label={canReorder ? `拖动排序：${task.title}` : "清除筛选后可排序"}
         title={canReorder ? "拖动排序；方向键微调，Home/End 移到首尾" : "清除筛选后可排序"}
         onPointerDown={(event) => onPointerStart(event, task.id)}
@@ -519,7 +542,7 @@ function TaskRow({
       </button>
       <button
         type="button"
-        className={`complete-toggle ${done ? "checked" : ""}`}
+        className={`complete-toggle ${visualDone ? "checked" : ""}`}
         aria-label={
           task.status === "todo"
             ? "开始任务"
@@ -530,12 +553,12 @@ function TaskRow({
                 : "标记为已完成"
         }
         title={task.status === "completed" || task.status === "archived" ? "恢复到待办" : undefined}
-        disabled={!actionStatus}
+        disabled={!actionStatus || transitioning || scoreEditorOpen}
         onClick={() => actionStatus && void onUpdate(task, { status: actionStatus })}
       >
-        {task.status === "todo" || done ? "" : "·"}
+        {task.status === "todo" || visualDone ? "" : "·"}
       </button>
-      <button type="button" className="task-summary" onClick={() => onOpen(task)}>
+      <button type="button" className="task-summary" disabled={transitioning} onClick={() => onOpen(task)}>
         <span className="task-title-line">
           <strong>{task.title}</strong>
           {task.hardness === "hard" && <span className="hard-mark" title="硬任务">◆</span>}
@@ -555,6 +578,7 @@ function TaskRow({
         <button
           type="button"
           className="task-children-toggle"
+          disabled={transitioning}
           aria-label={`${childrenExpanded ? "收起" : "展开"}${task.title}的子任务`}
           aria-expanded={childrenExpanded}
           title={childrenExpanded ? "收起子任务" : "展开子任务"}
@@ -576,6 +600,7 @@ function TaskRow({
         aria-label={`${task.title}的温度`}
         className={`inline-select temperature-${task.temperature}`}
         value={task.temperature}
+        disabled={transitioning}
         onChange={(event) =>
           void onUpdate(task, { temperature: event.target.value as Temperature })
         }
@@ -587,7 +612,8 @@ function TaskRow({
       <select
         aria-label={`${task.title}的状态`}
         className="inline-select status-select"
-        value={task.status}
+        value={displayedStatus}
+        disabled={transitioning}
         onChange={(event) =>
           void onUpdate(task, { status: event.target.value as TaskStatus })
         }
@@ -615,6 +641,7 @@ function TaskRow({
           aria-label={`${task.title}的计划日`}
           type="date"
           value={task.plannedDate?.slice(0, 10) ?? ""}
+          disabled={transitioning}
           onChange={(event) => void onUpdate(task, { plannedDate: event.target.value || null })}
         />
       </label>
@@ -626,6 +653,7 @@ function TaskRow({
         aria-expanded={scoreEditorOpen}
         aria-controls={`score-editor-${task.id}`}
         draggable={false}
+        disabled={transitioning}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
@@ -718,6 +746,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     onUpdate,
     onOpen,
     onReorder,
+    completionMotions = {},
   } = props;
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
@@ -792,6 +821,17 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
   const canReorder = !filterActive;
   const completed = tasks.filter((task) => task.status === "completed").length;
   const completion = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+  const activeCompletion = Object.entries(completionMotions).at(-1);
+  const activeCompletionTitle = activeCompletion
+    ? tasks.find((task) => task.id === activeCompletion[0])?.title ?? "任务"
+    : null;
+  const completionAnnouncement = activeCompletion && activeCompletionTitle
+    ? activeCompletion[1] === "exiting"
+      ? `${activeCompletionTitle}已标记完成，正在移出原队列`
+      : activeCompletion[1] === "entering"
+        ? `${activeCompletionTitle}已移入今日已完成`
+        : `${activeCompletionTitle}更新失败，已恢复原状态`
+    : "";
 
   function resolveReorderTarget(sourceId: string, rawTargetId: string): string | null {
     if (!reorderScopeIds.includes(rawTargetId) || sourceId === rawTargetId) return null;
@@ -976,9 +1016,10 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
         lineageIssue={lineageIssue}
         hasChildren={hasChildren}
         childrenExpanded={!collapsedTaskIds.has(task.id)}
-        canReorder={canReorder}
+        canReorder={canReorder && !completionMotions[task.id]}
         dragging={draggingId === task.id}
         dropPosition={dropTarget?.id === task.id ? dropTarget.position : null}
+        completionMotion={completionMotions[task.id] ?? null}
         onUpdate={onUpdate}
         onOpen={onOpen}
         onToggleChildren={toggleTaskChildren}
@@ -1215,6 +1256,9 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
           )}
         </div>
       )}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {completionAnnouncement}
+      </span>
     </section>
   );
 }

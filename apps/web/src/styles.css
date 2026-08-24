@@ -706,12 +706,76 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
 }
 
 .task-row {
+  --task-motion-height: 74px;
+  --task-motion-min-height: 73px;
+  --task-motion-margin: 0px;
+  --task-motion-padding: 9px;
   position: relative;
   min-height: 73px;
   padding: 9px 12px;
   border-bottom: 1px solid #e8ece7;
   background: rgba(255, 255, 255, 0.75);
   transition: background 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+@keyframes task-completion-exit {
+  0%, 30% {
+    max-height: var(--task-motion-height);
+    min-height: var(--task-motion-min-height);
+    margin-bottom: var(--task-motion-margin);
+    padding-top: var(--task-motion-padding);
+    padding-bottom: var(--task-motion-padding);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  48% {
+    max-height: var(--task-motion-height);
+    min-height: var(--task-motion-min-height);
+    margin-bottom: var(--task-motion-margin);
+    padding-top: var(--task-motion-padding);
+    padding-bottom: var(--task-motion-padding);
+    opacity: .42;
+    transform: translateY(-2px) scale(.995);
+  }
+  100% {
+    max-height: 0;
+    min-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-color: transparent;
+    opacity: 0;
+    transform: translateY(-8px) scale(.985);
+  }
+}
+
+@keyframes task-completion-enter {
+  0% { opacity: 0; transform: translateY(10px) scale(.988); background: #e5f1e9; }
+  58% { opacity: 1; transform: translateY(-1px) scale(1); background: #edf6f0; }
+  100% { opacity: 1; transform: translateY(0) scale(1); background: #f8faf7; }
+}
+
+@keyframes task-completion-restore {
+  0% { opacity: 0; transform: translateY(-7px) scale(.99); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.task-row.is-completion-exiting {
+  z-index: 2;
+  overflow: hidden;
+  animation: task-completion-exit 520ms cubic-bezier(.22,.76,.22,1) both;
+  pointer-events: none;
+  will-change: max-height, min-height, margin, padding, opacity, transform;
+}
+
+.task-row.is-completion-entering {
+  animation: task-completion-enter 360ms cubic-bezier(.2,.8,.2,1) both;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+.task-row.is-completion-restoring {
+  animation: task-completion-restore 240ms ease-out both;
 }
 
 .task-row:last-child { border-bottom: 0; }
@@ -2413,6 +2477,10 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
   }
   .task-queue-section:first-child > header { border-top: 1px solid #dfe5df; }
   .task-row {
+    --task-motion-height: 138px;
+    --task-motion-min-height: 130px;
+    --task-motion-margin: 8px;
+    --task-motion-padding: 12px;
     position: relative;
     grid-template-columns: 20px 27px minmax(0, 1fr) 82px;
     min-height: 130px;
@@ -2420,6 +2488,9 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
     padding: 12px;
     border: 1px solid #dfe5df;
     border-radius: 12px;
+  }
+  .task-row.is-completion-exiting {
+    border-color: transparent;
   }
   .drag-handle { grid-column: 1; grid-row: 1; }
   .complete-toggle { grid-column: 2; grid-row: 1; }

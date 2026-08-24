@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { createApi, hasConfiguredApi } from "./api";
 import type { LifeOSApi } from "./api";
@@ -8,8 +8,8 @@ import { GanttView } from "./GanttView";
 import { GoalsView } from "./GoalsView";
 import { CoachIcon, SettingsIcon } from "./Icons";
 import { MorningPlanner, ReviewView } from "./ReviewView";
-import { TaskBoard } from "./TaskBoard";
-import type { TaskFilters } from "./TaskBoard";
+import { TaskBoard, taskCompletionMotionDuration } from "./TaskBoard";
+import type { TaskCompletionMotion, TaskFilters } from "./TaskBoard";
 import type { AiCard, CreateTask, Goal, Rule, Task, UpdateTask } from "./types";
 import { todayKey } from "./utils";
 import { mergeScopedOrder, reorderTaskIds } from "./v02-utils";
@@ -63,6 +63,12 @@ function belongsToToday(task: Task): boolean {
   return plannedDate === today || Boolean(deadline && deadline <= today);
 }
 
+function waitForMotion(duration: number): Promise<void> {
+  return duration > 0
+    ? new Promise((resolve) => window.setTimeout(resolve, duration))
+    : Promise.resolve();
+}
+
 export function App(): ReactElement {
   const [api] = useState<LifeOSApi>(() => createApi());
   const [demoMode] = useState(!hasConfiguredApi);
@@ -84,6 +90,10 @@ export function App(): ReactElement {
   const [evaluatingRules, setEvaluatingRules] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [offline, setOffline] = useState(!navigator.onLine);
+  const [completionMotions, setCompletionMotions] = useState<
+    Partial<Record<string, TaskCompletionMotion>>
+  >({});
+  const completionMotionsRef = useRef(new Map<string, TaskCompletionMotion>());
 
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ??
@@ -236,11 +246,53 @@ export function App(): ReactElement {
     }
   }
 
-  async function safeTaskUpdate(task: Task, patch: UpdateTask): Promise<void> {
+  function setCompletionMotion(taskId: string, motion: TaskCompletionMotion | null): void {
+    if (motion) completionMotionsRef.current.set(taskId, motion);
+    else completionMotionsRef.current.delete(taskId);
+    setCompletionMotions(Object.fromEntries(completionMotionsRef.current));
+  }
+
+  async function completeTaskWithMotion(task: Task, patch: UpdateTask): Promise<boolean> {
+    if (completionMotionsRef.current.has(task.id)) return false;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    setCompletionMotion(task.id, "exiting");
+    try {
+      const [saved] = await Promise.all([
+        api.updateTask(task.id, task.version, patch),
+        waitForMotion(taskCompletionMotionDuration("exiting", reducedMotion)),
+      ]);
+      setTasks((current) =>
+        replaceTask(current, saved).sort((left, right) => left.rank - right.rank));
+      setTodayTasks((current) => {
+        const exists = current.some((item) => item.id === saved.id);
+        if (!belongsToToday(saved)) return current.filter((item) => item.id !== saved.id);
+        return (exists ? replaceTask(current, saved) : [...current, saved])
+          .sort((left, right) => left.rank - right.rank);
+      });
+      setCompletionMotion(task.id, "entering");
+      setToast("任务已完成，已移至今日已完成");
+      await waitForMotion(taskCompletionMotionDuration("entering", reducedMotion));
+      setCompletionMotion(task.id, null);
+      return true;
+    } catch (reason) {
+      setCompletionMotion(task.id, "restoring");
+      setToast(reason instanceof Error ? reason.message : "更新失败，已恢复原状态");
+      await waitForMotion(taskCompletionMotionDuration("restoring", reducedMotion));
+      setCompletionMotion(task.id, null);
+      return false;
+    }
+  }
+
+  async function safeTaskUpdate(task: Task, patch: UpdateTask): Promise<boolean> {
+    if (patch.status === "completed" && task.status !== "completed") {
+      return completeTaskWithMotion(task, patch);
+    }
     try {
       await persistTaskUpdate(task, patch);
+      return true;
     } catch (reason) {
       setToast(reason instanceof Error ? reason.message : "更新失败，已恢复原状态");
+      return false;
     }
   }
 
@@ -571,6 +623,7 @@ export function App(): ReactElement {
               onFiltersChange={setFilters}
               onAdd={addTask}
               onUpdate={safeTaskUpdate}
+              completionMotions={completionMotions}
               onOpen={(task) => setSelectedTaskId(task.id)}
               onReorder={reorderTasks}
               onViewChange={(nextView) => navigate(nextView)}
@@ -586,6 +639,7 @@ export function App(): ReactElement {
             onFiltersChange={setFilters}
             onAdd={addTask}
             onUpdate={safeTaskUpdate}
+            completionMotions={completionMotions}
             onOpen={(task) => setSelectedTaskId(task.id)}
             onReorder={reorderTasks}
             onViewChange={(nextView) => navigate(nextView)}

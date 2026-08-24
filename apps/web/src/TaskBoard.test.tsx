@@ -6,7 +6,9 @@ import {
   normalizeScoreDimensionDraft,
   parseScoreDimensionDraftValue,
   TaskBoard,
+  taskCompletionMotionDuration,
 } from "./TaskBoard";
+import type { TaskCompletionMotion } from "./TaskBoard";
 import type { Task } from "./types";
 import { calculateCompositeScore, todayKey } from "./utils";
 
@@ -28,7 +30,11 @@ const unscoredTask: Task = {
   updatedAt: "2026-08-24T08:00:00.000Z",
 };
 
-function renderBoard(tasks: Task[], view: "tasks" | "today" = "today"): string {
+function renderBoard(
+  tasks: Task[],
+  view: "tasks" | "today" = "today",
+  completionMotions: Partial<Record<string, TaskCompletionMotion>> = {},
+): string {
   return renderToStaticMarkup(
     <TaskBoard
       view={view}
@@ -39,11 +45,33 @@ function renderBoard(tasks: Task[], view: "tasks" | "today" = "today"): string {
       onFiltersChange={() => undefined}
       onAdd={async () => undefined}
       onUpdate={async () => undefined}
+      completionMotions={completionMotions}
       onOpen={() => undefined}
       onReorder={async () => undefined}
     />,
   );
 }
+
+describe("TaskBoard completion motion", () => {
+  it("keeps the source row visually completed and inert while it exits", () => {
+    const activeTask = { ...unscoredTask, status: "in_progress" as const };
+    const html = renderBoard([activeTask], "tasks", { [activeTask.id]: "exiting" });
+    const row = html.match(/<article[^>]*data-task-drop-id="task-unscored"[\s\S]*?<\/article>/)?.[0] ?? "";
+
+    expect(row).toContain("is-complete");
+    expect(row).toContain("is-completion-exiting");
+    expect(row).toContain('aria-busy="true"');
+    expect(row).toMatch(/class="complete-toggle checked"[^>]*disabled/);
+    expect(html).toContain("已标记完成，正在移出原队列");
+  });
+
+  it("removes motion delays when reduced motion is requested", () => {
+    expect(taskCompletionMotionDuration("exiting", false)).toBe(520);
+    expect(taskCompletionMotionDuration("entering", false)).toBe(360);
+    expect(taskCompletionMotionDuration("restoring", false)).toBe(240);
+    expect(taskCompletionMotionDuration("exiting", true)).toBe(0);
+  });
+});
 
 describe("TaskBoard score control", () => {
   it("keeps an emptied score field blank so retyping 30 does not produce 030", () => {
