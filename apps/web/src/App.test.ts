@@ -57,7 +57,7 @@ describe("application navigation", () => {
     vi.stubGlobal("navigator", { onLine: true });
 
     const html = renderToStaticMarkup(createElement(App));
-    const sidebar = html.slice(html.indexOf('<aside class="sidebar">'), html.indexOf("</aside>"));
+    const sidebar = html.slice(html.indexOf('<aside class="sidebar"'), html.indexOf("</aside>"));
     const mobileNav = html.slice(html.indexOf('<nav class="mobile-nav"'), html.indexOf("</nav>", html.indexOf('<nav class="mobile-nav"')));
 
     expect(sidebar).toContain('<span>视图</span>');
@@ -77,7 +77,7 @@ describe("application navigation", () => {
     vi.stubGlobal("navigator", { onLine: true });
 
     const html = renderToStaticMarkup(createElement(App));
-    const sidebar = html.slice(html.indexOf('<aside class="sidebar">'), html.indexOf("</aside>"));
+    const sidebar = html.slice(html.indexOf('<aside class="sidebar"'), html.indexOf("</aside>"));
     const settingsIndex = sidebar.indexOf("<span>设置</span>");
     const taskGroupsIndex = sidebar.indexOf('aria-label="任务分组"');
     const temperatureIndex = sidebar.indexOf(">温度分布</span>");

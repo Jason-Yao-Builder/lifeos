@@ -1,38 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
-  DragEvent,
   FormEvent,
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
   ReactElement,
 } from "react";
 import type {
-  CreateTask,
-  Task,
   TaskGroup,
   TaskScoreDimensions,
   TaskStatus,
   Temperature,
-  UpdateTask,
 } from "./types";
-import {
-  matchesTagKeyword,
-  matchesTaskTimeFilter,
-  passedPointerDragThreshold,
-  taskDropPosition,
-  taskHierarchyReorderAnchor,
-  taskQueueGroup,
-  taskRowsByRank,
-  taskTargetDate,
-  taskTreeRows,
-  visibleTaskTreeRows,
-} from "./v02-utils";
-import type { TaskDropPosition, TaskQueueGroupKey, TaskTimeFilter } from "./v02-utils";
+import { taskTargetDate } from "./v02-utils";
+import type { TaskTimeFilter } from "./v02-utils";
 import {
   calculateCompositeScore,
-  clampScoreDimension,
   formatLongDate,
   formatShortDate,
   mergeTags,
@@ -41,209 +24,57 @@ import {
   statusLabels,
   statusTransitions,
   temperatureLabels,
-  todayKey,
 } from "./utils";
+import type {
+  TaskBoardProps,
+  TaskFilters,
+  TaskRowRendererProps,
+} from "./features/tasks/contracts";
+import {
+  buildQuickTaskInput,
+  buildTaskGroupUpdatePatch,
+  claimParentInheritance,
+  createScoreDimensionDraft,
+  createScoreEditorState,
+  defaultScoreDimensions,
+  matchesTaskGroupFilter,
+  normalizeScoreDimensionDraft,
+  normalizeTaskGroupColor,
+  parseScoreDimensionDraftValue,
+  sameScoreDimensions,
+  scoreDimensionFields,
+  taskCompletionMotionDuration,
+  taskCompletionMotionDurations,
+  taskGroupColorPresets,
+} from "./features/tasks/model";
+import type { ScoreDimensionDraft } from "./features/tasks/model";
+import {
+  taskGroupEditorColor,
+  useTaskBoardController,
+} from "./features/tasks/useTaskBoardController";
 
-function sameScoreDimensions(
-  left: TaskScoreDimensions | null | undefined,
-  right: TaskScoreDimensions,
-): boolean {
-  return Boolean(left) && scoreDimensionFields.every(({ key }) => left?.[key] === right[key]);
-}
-
-const defaultScoreDimensions: TaskScoreDimensions = {
-  impact: 50,
-  urgency: 50,
-  alignment: 50,
-  effort: 50,
+export type {
+  TaskBoardProps,
+  TaskBoardRenderers,
+  TaskCompletionMotion,
+  TaskFilters,
+  TaskRowRendererProps,
+} from "./features/tasks/contracts";
+export type { QuickAddDraft, ScoreDimensionDraft } from "./features/tasks/model";
+export {
+  buildQuickTaskInput,
+  buildTaskGroupUpdatePatch,
+  claimParentInheritance,
+  createScoreDimensionDraft,
+  createScoreEditorState,
+  matchesTaskGroupFilter,
+  normalizeScoreDimensionDraft,
+  normalizeTaskGroupColor,
+  parseScoreDimensionDraftValue,
+  taskCompletionMotionDuration,
+  taskCompletionMotionDurations,
+  taskGroupColorPresets,
 };
-
-const scoreDimensionFields: Array<{
-  key: keyof TaskScoreDimensions;
-  label: string;
-  hint: string;
-}> = [
-  { key: "impact", label: "影响力", hint: "对结果的影响" },
-  { key: "urgency", label: "紧迫度", hint: "时间压力" },
-  { key: "alignment", label: "方向一致性", hint: "与长期方向一致" },
-  { key: "effort", label: "精力成本", hint: "仅作元数据，不参与评分" },
-];
-
-export type ScoreDimensionDraft = {
-  [Key in keyof TaskScoreDimensions]: number | "";
-};
-
-export function createScoreDimensionDraft(
-  dimensions: TaskScoreDimensions,
-): ScoreDimensionDraft {
-  return { ...dimensions };
-}
-
-export function createScoreEditorState(
-  taskDimensions: TaskScoreDimensions | null | undefined,
-  parentDimensions: TaskScoreDimensions | null | undefined,
-): { draft: ScoreDimensionDraft; inheritsParent: boolean } {
-  const inheritsParent = parentDimensions !== null && parentDimensions !== undefined && (
-    !taskDimensions || sameScoreDimensions(taskDimensions, parentDimensions)
-  );
-  const dimensions = inheritsParent && parentDimensions
-    ? parentDimensions
-    : taskDimensions ?? defaultScoreDimensions;
-  return {
-    draft: createScoreDimensionDraft(dimensions),
-    inheritsParent,
-  };
-}
-
-export function claimParentInheritance(
-  parentTaskId: string | null | undefined,
-  pending: { current: boolean },
-): boolean {
-  if (!parentTaskId || pending.current) return false;
-  pending.current = true;
-  return true;
-}
-
-export function parseScoreDimensionDraftValue(
-  rawValue: string,
-  valueAsNumber: number,
-): number | "" {
-  return rawValue === "" ? "" : clampScoreDimension(valueAsNumber);
-}
-
-export function normalizeScoreDimensionDraft(
-  draft: ScoreDimensionDraft,
-): TaskScoreDimensions | null {
-  if (
-    draft.impact === "" ||
-    draft.urgency === "" ||
-    draft.alignment === "" ||
-    draft.effort === ""
-  ) return null;
-  return {
-    impact: draft.impact,
-    urgency: draft.urgency,
-    alignment: draft.alignment,
-    effort: draft.effort,
-  };
-}
-
-export interface TaskFilters {
-  temperature: "all" | Temperature;
-  status: "all" | TaskStatus;
-  tag: string;
-  time: TaskTimeFilter;
-  group: "all" | "ungrouped" | string;
-}
-
-export function matchesTaskGroupFilter(task: Task, group: TaskFilters["group"]): boolean {
-  if (group === "all") return true;
-  if (group === "ungrouped") return !task.groupId;
-  return task.groupId === group;
-}
-
-const queueGroups: Array<{ key: TaskQueueGroupKey; label: string }> = [
-  { key: "overdue", label: "已逾期" },
-  { key: "due_today", label: "今日截止" },
-  { key: "future", label: "未来截止" },
-  { key: "unscheduled", label: "无截止安排" },
-  { key: "completed_today", label: "今日已完成" },
-  { key: "completed_past", label: "历史完成" },
-  { key: "other_terminal", label: "其他终态" },
-];
-
-interface TaskBoardProps {
-  view: "tasks" | "today";
-  tasks: Task[];
-  allTasks: Task[];
-  taskGroups: TaskGroup[];
-  filters: TaskFilters;
-  tags: string[];
-  onViewChange: (view: "tasks" | "today") => void;
-  onFiltersChange: (filters: TaskFilters) => void;
-  onAdd: (input: CreateTask) => Promise<void>;
-  onCreateTaskGroup: (input: Pick<TaskGroup, "name" | "color">) => Promise<TaskGroup>;
-  onUpdateTaskGroup: (
-    id: string,
-    patch: Partial<Pick<TaskGroup, "name" | "color">>,
-  ) => Promise<TaskGroup>;
-  onUpdate: (task: Task, patch: UpdateTask) => Promise<boolean | void>;
-  onInheritParent: (task: Task) => Promise<void>;
-  completionMotions?: Readonly<Partial<Record<string, TaskCompletionMotion>>>;
-  onOpen: (task: Task) => void;
-  onReorder: (
-    sourceId: string,
-    targetId: string,
-    position: TaskDropPosition,
-    scopeIds: string[],
-  ) => Promise<void>;
-}
-
-export type TaskCompletionMotion = "exiting" | "entering" | "restoring";
-
-export const taskCompletionMotionDurations: Record<TaskCompletionMotion, number> = {
-  exiting: 520,
-  entering: 360,
-  restoring: 240,
-};
-
-export function taskCompletionMotionDuration(
-  motion: TaskCompletionMotion,
-  reducedMotion: boolean,
-): number {
-  return reducedMotion ? 0 : taskCompletionMotionDurations[motion];
-}
-
-interface QuickAddDraft {
-  title: string;
-  description: string;
-  temperature: Temperature;
-  deadline: string;
-  groupId: string;
-  tags: string[];
-  tagInput: string;
-  manualScore: boolean;
-  scoreDimensions: TaskScoreDimensions;
-}
-
-export function buildQuickTaskInput(
-  view: TaskBoardProps["view"],
-  draft: QuickAddDraft,
-): CreateTask {
-  return {
-    title: draft.title.trim(),
-    description: draft.description.trim(),
-    temperature: draft.temperature,
-    deadline: draft.deadline || null,
-    plannedDate: view === "today" ? todayKey() : null,
-    groupId: draft.groupId || null,
-    tags: mergeTags(draft.tags, draft.tagInput),
-    ...(draft.manualScore ? { scoreDimensions: draft.scoreDimensions } : {}),
-  };
-}
-
-export const taskGroupColorPresets = [
-  "#2F6B52",
-  "#4D7C8A",
-  "#9A6A3A",
-  "#7A5FA3",
-  "#B04A5A",
-  "#526D9B",
-] as const;
-
-export function normalizeTaskGroupColor(value: string): string | null {
-  const normalized = value.trim().toUpperCase();
-  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
-}
-
-export function buildTaskGroupUpdatePatch(
-  nameDraft: string,
-  colorDraft: string,
-): Pick<TaskGroup, "name" | "color"> | null {
-  const name = nameDraft.trim();
-  const color = normalizeTaskGroupColor(colorDraft);
-  return name && color ? { name, color } : null;
-}
 
 export function TaskGroupCreator({
   idPrefix,
@@ -605,35 +436,7 @@ function QuickAdd({
   );
 }
 
-interface TaskRowProps {
-  task: Task;
-  parentTask: Task | null;
-  group: TaskGroup | null;
-  depth: number;
-  ancestorTitles: string[];
-  lineageIssue: "missing" | "cycle" | null;
-  hasChildren: boolean;
-  childrenExpanded: boolean;
-  canReorder: boolean;
-  dragging: boolean;
-  dropPosition: TaskDropPosition | null;
-  completionMotion: TaskCompletionMotion | null;
-  onUpdate: TaskBoardProps["onUpdate"];
-  onInheritParent: TaskBoardProps["onInheritParent"];
-  onOpen: TaskBoardProps["onOpen"];
-  onSelectGroup: (groupId: string) => void;
-  onToggleChildren: (taskId: string) => void;
-  onDragStart: (event: DragEvent, id: string) => void;
-  onDragEnd: () => void;
-  onDragOver: (event: DragEvent, id: string) => void;
-  onDrop: (event: DragEvent, id: string) => void;
-  onPointerStart: (event: ReactPointerEvent<HTMLButtonElement>, id: string) => void;
-  onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onPointerEnd: (event: ReactPointerEvent<HTMLButtonElement>, cancelled?: boolean) => void;
-  onKeyboardReorder: (event: KeyboardEvent<HTMLButtonElement>, id: string) => void;
-}
-
-function TaskRow({
+export function DefaultTaskRow({
   task,
   parentTask,
   group,
@@ -659,7 +462,7 @@ function TaskRow({
   onPointerMove,
   onPointerEnd,
   onKeyboardReorder,
-}: TaskRowProps): ReactElement {
+}: TaskRowRendererProps): ReactElement {
   const done = task.status === "completed" || task.status === "archived";
   const transitioning = completionMotion !== null;
   const visualDone = done || completionMotion === "exiting" || completionMotion === "entering";
@@ -769,6 +572,12 @@ function TaskRow({
     <article
       className={`task-row task-depth-${depth} ${group ? "task-group-row" : ""} ${hasChildren ? "has-children" : ""} ${task.parentTaskId ? "has-parent" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
       style={group ? ({ "--task-group-color": group.color } as CSSProperties) : undefined}
+      data-slot="task-row"
+      data-status={task.status}
+      data-temperature={task.temperature}
+      data-depth={depth}
+      data-grouped={group ? "true" : "false"}
+      data-state={completionMotion ?? (visualDone ? "complete" : "active")}
       data-task-drop-id={task.id}
       data-task-target-date={targetDate ?? undefined}
       role="treeitem"
@@ -1084,331 +893,33 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     onFiltersChange,
     onAdd,
     onCreateTaskGroup,
-    onUpdateTaskGroup,
     onUpdate,
     onInheritParent,
     onOpen,
-    onReorder,
     completionMotions = {},
   } = props;
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{
-    id: string | "end";
-    position: TaskDropPosition;
-  } | null>(null);
-  const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(() => new Set());
-  const [collapsedQueues, setCollapsedQueues] = useState<Set<TaskQueueGroupKey>>(() => new Set());
-  const initialFilterGroup = filters.group === "all" || filters.group === "ungrouped"
-    ? null
-    : taskGroups.find((group) => group.id === filters.group) ?? null;
-  const [groupNameDraft, setGroupNameDraft] = useState(initialFilterGroup?.name ?? "");
-  const [groupColorDraft, setGroupColorDraft] = useState(initialFilterGroup?.color ?? "");
-  const [groupDraftSaving, setGroupDraftSaving] = useState(false);
-  const [groupDraftError, setGroupDraftError] = useState("");
-  const selectedFilterGroupId = useRef<string | null>(null);
-  const pointerDrag = useRef<{
-    pointerId: number;
-    taskId: string;
-    startX: number;
-    startY: number;
-    active: boolean;
-    target: { id: string | "end"; position: TaskDropPosition } | null;
-  } | null>(null);
-  const currentDate = todayKey();
-  const taskGroupsById = useMemo(
-    () => new Map(taskGroups.map((group) => [group.id, group])),
-    [taskGroups],
-  );
-  const selectedFilterGroup = filters.group === "all" || filters.group === "ungrouped"
-    ? null
-    : taskGroupsById.get(filters.group) ?? null;
-  selectedFilterGroupId.current = selectedFilterGroup?.id ?? null;
-  const normalizedGroupDraft = buildTaskGroupUpdatePatch(groupNameDraft, groupColorDraft);
-  const groupDraftDirty = Boolean(selectedFilterGroup && normalizedGroupDraft && (
-    normalizedGroupDraft.name !== selectedFilterGroup.name ||
-    normalizedGroupDraft.color !== selectedFilterGroup.color
-  ));
-  const groupDraftValidationError = selectedFilterGroup && !groupNameDraft.trim()
-    ? "分组名称不能为空"
-    : "";
-
-  useEffect(() => {
-    setGroupNameDraft(selectedFilterGroup?.name ?? "");
-    setGroupColorDraft(selectedFilterGroup?.color ?? "");
-    setGroupDraftError("");
-  }, [selectedFilterGroup]);
-
-  async function saveSelectedGroup(): Promise<void> {
-    if (!selectedFilterGroup) return;
-    const patch = buildTaskGroupUpdatePatch(groupNameDraft, groupColorDraft);
-    if (!patch) {
-      setGroupDraftError(groupNameDraft.trim() ? "请选择有效颜色" : "分组名称不能为空");
-      return;
-    }
-    const groupId = selectedFilterGroup.id;
-    setGroupDraftSaving(true);
-    setGroupDraftError("");
-    try {
-      const updated = await onUpdateTaskGroup(groupId, patch);
-      if (selectedFilterGroupId.current === groupId) {
-        setGroupNameDraft(updated.name);
-        setGroupColorDraft(updated.color);
-      }
-    } catch (reason) {
-      if (selectedFilterGroupId.current === groupId) {
-        setGroupDraftError(reason instanceof Error ? reason.message : "分组更新失败，输入已保留");
-      }
-    } finally {
-      setGroupDraftSaving(false);
-    }
-  }
-  const orderedRows = useMemo(
-    () => view === "tasks" ? taskRowsByRank(tasks) : taskTreeRows(tasks),
-    [tasks, view],
-  );
-  const matchedRows = useMemo(
-    () =>
-      orderedRows.filter(
-        ({ task }) =>
-          (filters.temperature === "all" || task.temperature === filters.temperature) &&
-          (filters.status === "all" || task.status === filters.status) &&
-          matchesTaskGroupFilter(task, filters.group) &&
-          matchesTagKeyword(task.tags, filters.tag) &&
-          (view === "today" || matchesTaskTimeFilter(task, filters.time, currentDate)),
-      ),
-    [currentDate, filters, orderedRows, view],
-  );
-  const activeCollapsedTaskIds = useMemo(() => {
-    const matchedIds = new Set(matchedRows.map(({ task }) => task.id));
-    return new Set([...collapsedTaskIds].filter((id) => matchedIds.has(id)));
-  }, [collapsedTaskIds, matchedRows]);
-  const visibleRows = useMemo(() => {
-    const matchedIds = new Set(matchedRows.map(({ task }) => task.id));
-    return visibleTaskTreeRows(orderedRows, activeCollapsedTaskIds)
-      .filter(({ task }) => matchedIds.has(task.id));
-  }, [activeCollapsedTaskIds, matchedRows, orderedRows]);
-  const queueSections = useMemo(
-    () => queueGroups
-      .map((group) => {
-        const allRows = matchedRows.filter(
-          ({ task }) => taskQueueGroup(task, currentDate) === group.key,
-        );
-        const rows = visibleRows.filter(
-          ({ task }) => taskQueueGroup(task, currentDate) === group.key,
-        );
-        return { ...group, allRows, rows, hiddenByParent: allRows.length - rows.length };
-      })
-      .filter(({ allRows }) => allRows.length > 0),
-    [currentDate, matchedRows, visibleRows],
-  );
-  const renderedRows = useMemo(
-    () => view === "tasks"
-      ? queueSections.flatMap((section) => collapsedQueues.has(section.key) ? [] : section.rows)
-      : visibleRows,
-    [collapsedQueues, queueSections, view, visibleRows],
-  );
-  const reorderScopeIds = useMemo(
-    () => renderedRows.map(({ task }) => task.id),
-    [renderedRows],
-  );
-  const visibleTasks = matchedRows.map(({ task }) => task);
-  const filterActive =
-    filters.temperature !== "all" ||
-    filters.status !== "all" ||
-    filters.group !== "all" ||
-    Boolean(filters.tag.trim()) ||
-    (view === "tasks" && filters.time !== "current");
-  const canReorder = !filterActive;
-  const completed = tasks.filter((task) => task.status === "completed").length;
-  const completion = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
-  const activeCompletion = Object.entries(completionMotions).at(-1);
-  const activeCompletionTitle = activeCompletion
-    ? tasks.find((task) => task.id === activeCompletion[0])?.title ?? "任务"
-    : null;
-  const completionAnnouncement = activeCompletion && activeCompletionTitle
-    ? activeCompletion[1] === "exiting"
-      ? `${activeCompletionTitle}已标记完成，正在移出原队列`
-      : activeCompletion[1] === "entering"
-        ? `${activeCompletionTitle}已移入今日已完成`
-        : `${activeCompletionTitle}更新失败，已恢复原状态`
-    : "";
-
-  function resolveReorderTarget(sourceId: string, rawTargetId: string): string | null {
-    if (!reorderScopeIds.includes(rawTargetId) || sourceId === rawTargetId) return null;
-    if (view === "tasks") {
-      const source = tasks.find((task) => task.id === sourceId);
-      const target = tasks.find((task) => task.id === rawTargetId);
-      if (
-        !source ||
-        !target ||
-        taskQueueGroup(source, currentDate) !== taskQueueGroup(target, currentDate)
-      ) return null;
-      return rawTargetId;
-    }
-    const anchorId = taskHierarchyReorderAnchor(tasks, sourceId, rawTargetId);
-    return anchorId && reorderScopeIds.includes(anchorId) ? anchorId : null;
-  }
-
-  function reorderAnchorsFor(sourceId: string): string[] {
-    const anchors: string[] = [];
-    const seen = new Set<string>();
-    for (const candidateId of reorderScopeIds) {
-      const anchorId = candidateId === sourceId
-        ? sourceId
-        : resolveReorderTarget(sourceId, candidateId);
-      if (anchorId && !seen.has(anchorId)) {
-        seen.add(anchorId);
-        anchors.push(anchorId);
-      }
-    }
-    return anchors;
-  }
-
-  function commitReorder(
-    sourceId: string,
-    rawTargetId: string,
-    position: TaskDropPosition,
-  ): void {
-    const targetId = resolveReorderTarget(sourceId, rawTargetId);
-    if (targetId && targetId !== sourceId) {
-      void onReorder(sourceId, targetId, position, reorderAnchorsFor(sourceId));
-    }
-  }
-
-  function drop(event: DragEvent, rawTargetId: string): void {
-    event.preventDefault();
-    const sourceId = draggingId ?? event.dataTransfer.getData("text/plain");
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (sourceId) {
-      commitReorder(
-        sourceId,
-        rawTargetId,
-        taskDropPosition(event.clientY, bounds.top, bounds.height),
-      );
-    }
-    setDraggingId(null);
-    setDropTarget(null);
-  }
-
-  function dropAtEnd(event?: DragEvent): void {
-    event?.preventDefault();
-    const sourceId = draggingId ?? event?.dataTransfer.getData("text/plain") ?? "";
-    const anchors = reorderAnchorsFor(sourceId);
-    const targetId = anchors.at(-1);
-    if (sourceId && targetId && targetId !== sourceId) {
-      void onReorder(sourceId, targetId, "after", anchors);
-    }
-    setDraggingId(null);
-    setDropTarget(null);
-  }
-
-  function startPointer(event: ReactPointerEvent<HTMLButtonElement>, taskId: string): void {
-    if (!canReorder || event.pointerType === "mouse" || !event.isPrimary) return;
-    pointerDrag.current = {
-      pointerId: event.pointerId,
-      taskId,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      target: null,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function movePointer(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = pointerDrag.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    if (!drag.active && passedPointerDragThreshold(drag.startX, drag.startY, event.clientX, event.clientY)) {
-      drag.active = true;
-      setDraggingId(drag.taskId);
-    }
-    if (!drag.active) return;
-    event.preventDefault();
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(
-      "[data-task-drop-id], [data-task-drop-end]",
-    );
-    let nextTarget: { id: string | "end"; position: TaskDropPosition } | null = null;
-    if (target?.hasAttribute("data-task-drop-end")) {
-      nextTarget = { id: "end", position: "after" };
-    } else if (target?.dataset.taskDropId) {
-      const anchorId = resolveReorderTarget(drag.taskId, target.dataset.taskDropId);
-      if (anchorId && anchorId !== drag.taskId) {
-        const bounds = target.getBoundingClientRect();
-        nextTarget = {
-          id: anchorId,
-          position: taskDropPosition(event.clientY, bounds.top, bounds.height),
-        };
-      }
-    }
-    drag.target = nextTarget;
-    setDropTarget(nextTarget);
-  }
-
-  function finishPointer(event: ReactPointerEvent<HTMLButtonElement>, cancelled = false): void {
-    const drag = pointerDrag.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    pointerDrag.current = null;
-    setDraggingId(null);
-    setDropTarget(null);
-    if (!drag.active || cancelled || !drag.target) return;
-    if (drag.target.id === "end") {
-      const anchors = reorderAnchorsFor(drag.taskId);
-      const targetId = anchors.at(-1);
-      if (targetId && targetId !== drag.taskId) {
-        void onReorder(drag.taskId, targetId, "after", anchors);
-      }
-      return;
-    }
-    void onReorder(
-      drag.taskId,
-      drag.target.id,
-      drag.target.position,
-      reorderAnchorsFor(drag.taskId),
-    );
-  }
-
-  function keyboardReorder(event: KeyboardEvent<HTMLButtonElement>, taskId: string): void {
-    if (!canReorder || !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-    const anchors = reorderAnchorsFor(taskId);
-    const index = anchors.indexOf(taskId);
-    if (index < 0) return;
-    const movingUp = event.key === "ArrowUp" || event.key === "Home";
-    const targetId = event.key === "Home"
-      ? anchors[0]
-      : event.key === "End"
-        ? anchors.at(-1)
-        : movingUp
-          ? anchors[index - 1]
-          : anchors[index + 1];
-    if (!targetId || targetId === taskId) return;
-    event.preventDefault();
-    void onReorder(taskId, targetId, movingUp ? "before" : "after", anchors);
-  }
-
-  function toggleTaskChildren(taskId: string): void {
-    setCollapsedTaskIds((current) => {
-      const next = new Set(current);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
-      return next;
-    });
-  }
-
-  function toggleQueue(key: TaskQueueGroupKey): void {
-    setCollapsedQueues((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
+  const { viewModel, actions } = useTaskBoardController(props);
+  const {
+    visibleRows,
+    queueSections,
+    visibleTasks,
+    filterActive,
+    canReorder,
+    completed,
+    completion,
+    completionAnnouncement,
+    taskGroupsById,
+    selectedFilterGroup,
+    groupEditor,
+    collapsedTaskIds,
+    collapsedQueues,
+    draggingId,
+    dropTarget,
+  } = viewModel;
+  const TaskRowRenderer = props.renderers?.TaskRow ?? DefaultTaskRow;
   function renderTaskRow({ task, depth, ancestorTitles, lineageIssue, hasChildren }: (typeof visibleRows)[number]): ReactElement {
     return (
-      <TaskRow
+      <TaskRowRenderer
         key={task.id}
         task={task}
         parentTask={task.parentTaskId
@@ -1427,45 +938,22 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
         onUpdate={onUpdate}
         onInheritParent={onInheritParent}
         onOpen={onOpen}
-        onSelectGroup={(groupId) => onFiltersChange({ ...filters, group: groupId })}
-        onToggleChildren={toggleTaskChildren}
-        onDragStart={(event, id) => {
-          setDraggingId(id);
-          setDropTarget(null);
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", id);
-        }}
-        onDragEnd={() => {
-          setDraggingId(null);
-          setDropTarget(null);
-        }}
-        onDragOver={(event, id) => {
-          if (!canReorder) return;
-          const sourceId = draggingId ?? event.dataTransfer.getData("text/plain");
-          const anchorId = sourceId ? resolveReorderTarget(sourceId, id) : null;
-          if (!sourceId || !anchorId || anchorId === sourceId) {
-            setDropTarget(null);
-            return;
-          }
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-          const bounds = event.currentTarget.getBoundingClientRect();
-          setDropTarget({
-            id: anchorId,
-            position: taskDropPosition(event.clientY, bounds.top, bounds.height),
-          });
-        }}
-        onDrop={drop}
-        onPointerStart={startPointer}
-        onPointerMove={movePointer}
-        onPointerEnd={finishPointer}
-        onKeyboardReorder={keyboardReorder}
+        onSelectGroup={actions.selectGroup}
+        onToggleChildren={actions.toggleTaskChildren}
+        onDragStart={actions.nativeDragStart}
+        onDragEnd={actions.nativeDragEnd}
+        onDragOver={actions.nativeDragOver}
+        onDrop={actions.drop}
+        onPointerStart={actions.startPointer}
+        onPointerMove={actions.movePointer}
+        onPointerEnd={actions.finishPointer}
+        onKeyboardReorder={actions.keyboardReorder}
       />
     );
   }
 
   return (
-    <section className="board">
+    <section className="board" data-slot="task-board" data-view={view}>
       <header className="board-header">
         <div>
           <p className="eyebrow">{view === "today" ? formatLongDate() : "当前全景"}</p>
@@ -1511,30 +999,30 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
                 type="text"
                 className="task-group-name-input"
                 aria-label={`修改「${selectedFilterGroup.name}」的名称`}
-                aria-invalid={!groupNameDraft.trim()}
-                value={groupNameDraft}
+                aria-invalid={!groupEditor.name.trim()}
+                value={groupEditor.name}
                 onChange={(event) => {
-                  setGroupNameDraft(event.target.value);
-                  setGroupDraftError("");
+                  actions.setGroupName(event.target.value);
+                  actions.clearGroupError();
                 }}
               />
               <input
                 type="color"
                 aria-label={`修改「${selectedFilterGroup.name}」的颜色`}
-                value={normalizeTaskGroupColor(groupColorDraft) ?? selectedFilterGroup.color}
+                value={taskGroupEditorColor(groupEditor, selectedFilterGroup)}
                 onChange={(event) => {
-                  setGroupColorDraft(event.target.value.toUpperCase());
-                  setGroupDraftError("");
+                  actions.setGroupColor(event.target.value.toUpperCase());
+                  actions.clearGroupError();
                 }}
               />
               <button
                 type="button"
                 className="text-button"
-                disabled={groupDraftSaving || !groupDraftDirty || Boolean(groupDraftValidationError)}
-                onClick={() => void saveSelectedGroup()}
-              >{groupDraftSaving ? "保存中…" : "保存分组"}</button>
-              {(groupDraftError || groupDraftValidationError) && (
-                <span role="alert">{groupDraftError || groupDraftValidationError}</span>
+                disabled={groupEditor.saving || !groupEditor.dirty || Boolean(groupEditor.validationError)}
+                onClick={() => void actions.saveSelectedGroup()}
+              >{groupEditor.saving ? "保存中…" : "保存分组"}</button>
+              {(groupEditor.error || groupEditor.validationError) && (
+                <span role="alert">{groupEditor.error || groupEditor.validationError}</span>
               )}
             </div>
           )}
@@ -1582,7 +1070,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <button
               className="text-button"
               type="button"
-              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current", group: "all" })}
+              onClick={actions.clearFilters}
             >
               清除筛选
             </button>
@@ -1621,7 +1109,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
                           className="task-queue-toggle"
                           aria-expanded={!collapsed}
                           aria-controls={contentId}
-                          onClick={() => toggleQueue(section.key)}
+                          onClick={() => actions.toggleQueue(section.key)}
                         >
                           <strong>{section.label}</strong>
                           <span className="task-queue-count">{section.allRows.length}</span>
@@ -1650,15 +1138,9 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
                 aria-label="将正在拖动的任务移到列表末尾"
                 aria-disabled={!draggingId}
                 tabIndex={-1}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                  setDropTarget({ id: "end", position: "after" });
-                }}
-                onDragLeave={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null);
-                }}
-                onDrop={dropAtEnd}
+                onDragOver={actions.dragOverEnd}
+                onDragLeave={actions.dragLeaveEnd}
+                onDrop={actions.dropAtEnd}
               >
                 <span aria-hidden="true">↓</span>
                 拖到这里移至当前同级队列末尾
@@ -1681,7 +1163,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <button
               className="button button-secondary"
               type="button"
-              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current", group: "all" })}
+              onClick={actions.clearFilters}
             >
               清除筛选
             </button>

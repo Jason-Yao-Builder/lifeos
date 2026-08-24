@@ -1,40 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { DragEvent, PointerEvent as ReactPointerEvent, ReactElement } from "react";
 import type { LifeOSApi } from "./api";
 import { TaskViewTabs, useTaskViewSwipe } from "./TaskViewNavigation";
 import type { TaskViewKind } from "./TaskViewNavigation";
 import type { CalendarData, CalendarMode, Task } from "./types";
+import { useCalendarController } from "./features/calendar/useCalendarController";
 import {
-  addDays,
   calendarAnchorForMonth,
-  dateRange,
   deadlineLevel,
-  localDate,
-  monthGrid,
   passedPointerDragThreshold,
-  stepCalendarAnchor,
-  startOfWeek,
 } from "./v02-utils";
 import { statusLabels, temperatureLabels } from "./utils";
 
-interface CalendarViewProps {
+export interface CalendarViewProps {
   api: LifeOSApi;
   tasks: Task[];
   onOpen: (task: Task) => void;
   onTaskSaved: (task: Task) => void;
   onToast: (message: string) => void;
   onViewChange?: (view: TaskViewKind) => void;
-}
-
-function rangeFor(anchor: string, mode: CalendarMode): string[] {
-  if (mode === "day") return [anchor];
-  if (mode === "week") return dateRange(startOfWeek(anchor), addDays(startOfWeek(anchor), 6));
-  return monthGrid(anchor);
-}
-
-function dateLabel(date: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" })
-    .format(new Date(`${date}T12:00:00`));
 }
 
 export function scrollCalendarAtPointerEdge(
@@ -55,38 +39,11 @@ export function CalendarView({
   onToast,
   onViewChange,
 }: CalendarViewProps): ReactElement {
-  const today = localDate(new Date());
-  const [anchor, setAnchor] = useState(today);
-  const [mode, setMode] = useState<CalendarMode>("month");
-  const [data, setData] = useState<CalendarData>({ days: {} });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { viewModel, actions } = useCalendarController({ api, tasks, onTaskSaved, onToast });
+  const { today, anchor, mode, data, loading, error, days, title } = viewModel;
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const monthPicker = useRef<HTMLInputElement>(null);
-  const days = useMemo(() => rangeFor(anchor, mode), [anchor, mode]);
-  const start = days[0] ?? anchor;
-  const end = days.at(-1) ?? anchor;
   const swipeHandlers = useTaskViewSwipe("calendar", onViewChange);
-
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    setError("");
-    try {
-      setData(await api.getCalendar(start, end, mode));
-    } catch {
-      setError("日历数据暂时无法读取。");
-    } finally {
-      setLoading(false);
-    }
-  }, [api, end, mode, start]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  function step(amount: number): void {
-    setAnchor((current) => stepCalendarAnchor(current, mode, amount));
-  }
 
   function openMonthPicker(): void {
     const input = monthPicker.current;
@@ -104,31 +61,15 @@ export function CalendarView({
   }
 
   async function moveTask(id: string, date: string): Promise<void> {
-    const task = tasks.find((item) => item.id === id);
-    if (!task || task.plannedDate?.slice(0, 10) === date) return;
-    const previous = data;
-    setData((current) => moveInCalendar(current, task, date));
     setDraggedId(null);
-    try {
-      const saved = await api.rescheduleTask(task, date);
-      onTaskSaved(saved);
-      onToast(`已移到 ${date}`);
-      await load();
-    } catch (reason) {
-      setData(previous);
-      onToast(reason instanceof Error ? reason.message : "移动失败，已恢复原日期");
-    }
+    await actions.moveTask(id, date);
   }
-
-  const title = mode === "month"
-    ? `${anchor.slice(0, 4)} 年 ${Number(anchor.slice(5, 7))} 月`
-    : mode === "week"
-      ? `${dateLabel(start)} — ${dateLabel(end)}`
-      : dateLabel(anchor);
 
   return (
     <section
       className="board v02-page calendar-page task-view-page"
+      data-slot="calendar-view"
+      data-calendar-view={mode}
       aria-labelledby="task-views-title"
       {...swipeHandlers}
     >
@@ -145,15 +86,15 @@ export function CalendarView({
         <div className="task-view-options calendar-view-options">
         <div className="view-switcher" role="group" aria-label="日历视图">
           {(["month", "week", "day"] as CalendarMode[]).map((item) => (
-            <button type="button" className={mode === item ? "active" : ""} aria-pressed={mode === item} key={item} onClick={() => setMode(item)}>
+            <button type="button" className={mode === item ? "active" : ""} aria-pressed={mode === item} key={item} onClick={() => actions.setMode(item)}>
               {{ month: "月", week: "周", day: "日" }[item]}
             </button>
           ))}
         </div>
         </div>
         <div className="calendar-toolbar">
-        <button type="button" className="button button-secondary" onClick={() => step(-1)} aria-label={`上一个${{ month: "月", week: "周", day: "日" }[mode]}`}>←</button>
-        <button type="button" className="button button-secondary" onClick={() => setAnchor(today)}>今天</button>
+        <button type="button" className="button button-secondary" onClick={() => actions.step(-1)} aria-label={`上一个${{ month: "月", week: "周", day: "日" }[mode]}`}>←</button>
+        <button type="button" className="button button-secondary" onClick={() => actions.setAnchor(today)}>今天</button>
         <div className="calendar-period-picker">
           <button
             type="button"
@@ -172,13 +113,13 @@ export function CalendarView({
             value={anchor.slice(0, 7)}
             onChange={(event) => {
               const next = calendarAnchorForMonth(anchor, event.currentTarget.value, mode);
-              if (next) setAnchor(next);
+              if (next) actions.setAnchor(next);
             }}
           />
         </div>
-        <button type="button" className="button button-secondary" onClick={() => step(1)} aria-label={`下一个${{ month: "月", week: "周", day: "日" }[mode]}`}>→</button>
+        <button type="button" className="button button-secondary" onClick={() => actions.step(1)} aria-label={`下一个${{ month: "月", week: "周", day: "日" }[mode]}`}>→</button>
         </div>
-        {error && <div className="inline-error"><span>{error}</span><button onClick={() => void load()}>重试</button></div>}
+        {error && <div className="inline-error"><span>{error}</span><button onClick={() => void actions.reload()}>重试</button></div>}
         {loading ? <div className="v02-loading">正在排列日历…</div> : (
           <div className="calendar-scroll">
             <CalendarGrid
@@ -201,19 +142,6 @@ export function CalendarView({
       </div>
     </section>
   );
-}
-
-function moveInCalendar(data: CalendarData, task: Task, date: string): CalendarData {
-  const days = Object.fromEntries(Object.entries(data.days).map(([key, value]) => [key, {
-    ...value,
-    tasks: value.tasks.filter((item) => item.id !== task.id),
-    repeatTasks: value.repeatTasks.filter((item) => item.id !== task.id),
-  }]));
-  const next = { ...task, plannedDate: date };
-  days[date] ??= { tasks: [], deadlineTasks: [], repeatTasks: [] };
-  days[date].tasks.push(next);
-  if (task.repeatTemplateId) days[date].repeatTasks.push(next);
-  return { days };
 }
 
 interface CalendarGridProps {

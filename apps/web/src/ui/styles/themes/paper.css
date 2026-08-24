@@ -1,0 +1,30 @@
+@layer themes {
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --ui-color-text: #25221e;
+  --ui-color-text-muted: #6e675e;
+  --ui-color-text-subtle: #8b8379;
+  --ui-color-border: #d6cfc3;
+  --ui-color-border-strong: #aaa093;
+  --ui-color-surface: #fffdf8;
+  --ui-color-surface-subtle: #f7f2e9;
+  --ui-color-document: #e9e2d7;
+  --ui-color-canvas: #f4eee5;
+  --ui-color-accent: #315b96;
+  --ui-color-accent-strong: #24436f;
+  --ui-color-accent-soft: #dfe8f6;
+  --ui-color-on-accent: #fff;
+  --ui-color-danger: #ad4537;
+  --ui-color-focus-ring: rgba(49, 91, 150, 0.3);
+  --ui-color-overlay: rgba(37, 34, 30, 0.38);
+  --ui-font-family-sans: "Avenir Next", Avenir, "PingFang SC", sans-serif;
+  --ui-radius-xs: 2px;
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 6px;
+  --ui-radius-lg: 8px;
+  --ui-radius-xl: 12px;
+  --ui-shadow-sm: 0 2px 5px rgba(50, 42, 32, 0.12);
+  --ui-shadow-md: 0 5px 14px rgba(50, 42, 32, 0.12);
+  --ui-shadow-lg: 0 10px 28px rgba(50, 42, 32, 0.15);
+}
+}

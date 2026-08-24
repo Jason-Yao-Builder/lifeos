@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { LifeOSApi } from "./api";
 import { CalendarView, scrollCalendarAtPointerEdge } from "./CalendarView";
+import { calendarRange, moveTaskInCalendar } from "./features/calendar/useCalendarController";
+import type { CalendarData, Task } from "./types";
 
 describe("CalendarView", () => {
   it("renders an SSR-safe full-title month picker", () => {
@@ -37,5 +39,23 @@ describe("CalendarView", () => {
     expect(closest).toHaveBeenNthCalledWith(2, ".calendar-scroll");
     expect(scrollBy).toHaveBeenNthCalledWith(1, { left: -18 });
     expect(scrollBy).toHaveBeenNthCalledWith(2, { left: 18 });
+  });
+
+  it("keeps date projection logic independent from the renderer", () => {
+    const task = {
+      id: "task-1",
+      plannedDate: "2026-08-24",
+      repeatTemplateId: null,
+    } as Task;
+    const data: CalendarData = {
+      days: {
+        "2026-08-24": { tasks: [task], deadlineTasks: [], repeatTasks: [] },
+      },
+    };
+
+    expect(calendarRange("2026-08-24", "week")).toHaveLength(7);
+    expect(moveTaskInCalendar(data, task, "2026-08-25").days["2026-08-25"]?.tasks)
+      .toMatchObject([{ id: task.id, plannedDate: "2026-08-25" }]);
+    expect(data.days["2026-08-24"]?.tasks).toEqual([task]);
   });
 });

@@ -2,354 +2,86 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactElement } from "react";
 import { createApi, hasConfiguredApi } from "./api";
 import type { LifeOSApi } from "./api";
-import { AiDrawer, RulesDrawer, TaskDrawer } from "./Drawers";
-import { CalendarView } from "./CalendarView";
-import { GanttView } from "./GanttView";
 import { GoalsView } from "./GoalsView";
 import { CoachIcon, SettingsIcon } from "./Icons";
 import { MorningPlanner, ReviewView } from "./ReviewView";
-import { TaskBoard, taskCompletionMotionDuration } from "./TaskBoard";
-import type { TaskCompletionMotion, TaskFilters } from "./TaskBoard";
+import { taskCompletionMotionDuration } from "./TaskBoard";
+import type { TaskCompletionMotion } from "./TaskBoard";
 import type { AiCard, CreateTask, Goal, Rule, Task, TaskGroup, UpdateTask } from "./types";
 import { todayKey } from "./utils";
 import { mergeScopedOrder, reorderTaskIds } from "./v02-utils";
 import type { TaskDropPosition } from "./v02-utils";
+import { useLifeOSUI } from "./ui";
+import type {
+  AppLoadState,
+  AppReviewRoute,
+  AppShellActions,
+  AppShellViewModel,
+  AppTaskFilters,
+  AppView,
+} from "./app/contracts";
+import { loadApplicationData, taskBelongsToDate } from "./app/data-controller";
+import {
+  emptyTaskFilters,
+  isKnownTaskGroup,
+  isSettingsArea,
+  isViewsArea,
+  pathForView,
+  reviewRouteForPathname,
+  shouldPushTaskGroupNavigation,
+  shouldPushTaskTemperatureNavigation,
+  taskFiltersForGroup,
+  taskFiltersForHistoryEntry,
+  taskFiltersForTemperature,
+  taskGroupNavigationItems,
+  taskGroupPath,
+  taskHistoryState,
+  temperatureNavigationItems,
+  viewForPathname,
+} from "./app/navigation";
 
-type View = "tasks" | "today" | "calendar" | "gantt" | "goals" | "review" | "settings";
-type LoadState = "loading" | "ready" | "error";
+export { AppSidebar, TaskGroupSidebar, TemperatureSidebar } from "./features/shell/AppSidebar";
+export type {
+  AppSidebarActions,
+  AppSidebarProps,
+  AppSidebarViewModel,
+} from "./features/shell/AppSidebar";
 
-const emptyFilters: TaskFilters = {
-  temperature: "all",
-  status: "all",
-  tag: "",
-  time: "current",
-  group: "all",
-};
-
-const taskFilterTemperatures = new Set(["all", "hot", "warm", "cold", "inspiration"]);
-const taskFilterStatuses = new Set([
-  "all",
-  "todo",
-  "in_progress",
-  "completed",
-  "archived",
-  "abandoned",
-]);
-const taskFilterTimes = new Set([
-  "all",
-  "current",
-  "target_today",
-  "target_future",
-  "target_past",
-  "completed_today",
-  "completed_past",
-]);
-const taskFiltersHistoryKey = "lifeosTaskFilters";
-
-export function viewForPathname(pathname: string): View {
-  if (pathname.startsWith("/review/")) return "review";
-  if (pathname.endsWith("/today")) return "today";
-  if (pathname.endsWith("/calendar")) return "calendar";
-  if (pathname.endsWith("/gantt")) return "gantt";
-  if (pathname.endsWith("/goals")) return "goals";
-  if (pathname.endsWith("/settings")) return "settings";
-  if (pathname === "/" || pathname === "") return "tasks";
-  return "tasks";
-}
-
-export function isSettingsArea(view: View): boolean {
-  return view === "settings" || view === "goals";
-}
-
-export function isViewsArea(view: View): boolean {
-  return view === "calendar" || view === "gantt";
-}
-
-export interface TaskGroupNavigationItem {
-  id: TaskFilters["group"];
-  label: string;
-  color: string | null;
-  count: number;
-}
-
-export interface TemperatureNavigationItem {
-  id: TaskFilters["temperature"];
-  label: string;
-  count: number;
-}
+export type {
+  AppLoadState,
+  AppReviewRoute,
+  AppShellActions,
+  AppShellViewModel,
+  AppTaskFilters,
+  AppView,
+  TaskGroupNavigationItem,
+  TemperatureNavigationItem,
+} from "./app/contracts";
+export {
+  isKnownTaskGroup,
+  isSettingsArea,
+  isViewsArea,
+  shouldPushTaskGroupNavigation,
+  shouldPushTaskTemperatureNavigation,
+  taskFiltersForGroup,
+  taskFiltersForHistoryEntry,
+  taskFiltersForTemperature,
+  taskGroupFromLocation,
+  taskGroupNavigationItems,
+  taskGroupPath,
+  taskHistoryState,
+  taskTemperatureFromLocation,
+  temperatureNavigationItems,
+  viewForPathname,
+} from "./app/navigation";
 
 type SidebarGroupStyle = CSSProperties & { "--sidebar-group-color"?: string };
 
-export function taskGroupNavigationItems(
-  tasks: readonly Pick<Task, "groupId">[],
-  groups: readonly Pick<TaskGroup, "id" | "name" | "color">[],
-): TaskGroupNavigationItem[] {
-  const counts = new Map<string, number>();
-  for (const task of tasks) {
-    if (task.groupId) counts.set(task.groupId, (counts.get(task.groupId) ?? 0) + 1);
-  }
-  return [
-    { id: "all", label: "全部任务", color: null, count: tasks.length },
-    {
-      id: "ungrouped",
-      label: "未分组",
-      color: null,
-      count: tasks.filter((task) => !task.groupId).length,
-    },
-    ...groups.map((group) => ({
-      id: group.id,
-      label: group.name,
-      color: group.color,
-      count: counts.get(group.id) ?? 0,
-    })),
-  ];
-}
-
-export function taskFiltersForGroup(
-  filters: TaskFilters,
-  group: TaskFilters["group"],
-): TaskFilters {
-  return { ...filters, group };
-}
-
-export function temperatureNavigationItems(
-  tasks: readonly Pick<Task, "temperature">[],
-): TemperatureNavigationItem[] {
-  const temperatures: readonly Exclude<TaskFilters["temperature"], "all">[] = [
-    "hot",
-    "warm",
-    "cold",
-    "inspiration",
-  ];
-  const labels: Record<Exclude<TaskFilters["temperature"], "all">, string> = {
-    hot: "热",
-    warm: "温",
-    cold: "冷",
-    inspiration: "灵感",
-  };
-  return [
-    { id: "all", label: "全部温度", count: tasks.length },
-    ...temperatures.map((temperature) => ({
-      id: temperature,
-      label: labels[temperature],
-      count: tasks.filter((task) => task.temperature === temperature).length,
-    })),
-  ];
-}
-
-export function taskFiltersForTemperature(
-  filters: TaskFilters,
-  temperature: TaskFilters["temperature"],
-): TaskFilters {
-  return { ...filters, temperature };
-}
-
-export function taskGroupFromLocation(pathname: string, search: string): TaskFilters["group"] {
-  if (pathname !== "/tasks") return "all";
-  const rawGroup = new URLSearchParams(search).get("group")?.trim();
-  return rawGroup && rawGroup !== "all" ? rawGroup : "all";
-}
-
-export function taskTemperatureFromLocation(
-  pathname: string,
-  search: string,
-): TaskFilters["temperature"] {
-  if (pathname !== "/tasks") return "all";
-  const rawTemperature = new URLSearchParams(search).get("temperature")?.trim() ?? "all";
-  return taskFilterTemperatures.has(rawTemperature)
-    ? rawTemperature as TaskFilters["temperature"]
-    : "all";
-}
-
-export function taskGroupPath(
-  group: TaskFilters["group"],
-  temperature: TaskFilters["temperature"] = "all",
-): string {
-  const search = new URLSearchParams();
-  if (group !== "all") search.set("group", group);
-  if (temperature !== "all") search.set("temperature", temperature);
-  const query = search.toString();
-  return query ? `/tasks?${query}` : "/tasks";
-}
-
-export function isKnownTaskGroup(
-  group: TaskFilters["group"],
-  groups: readonly Pick<TaskGroup, "id">[],
-): boolean {
-  return group === "all" || group === "ungrouped" || groups.some((item) => item.id === group);
-}
-
-function isTaskFilters(value: unknown): value is TaskFilters {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value as Partial<Record<keyof TaskFilters, unknown>>;
-  return typeof candidate.temperature === "string" &&
-    taskFilterTemperatures.has(candidate.temperature) &&
-    typeof candidate.status === "string" &&
-    taskFilterStatuses.has(candidate.status) &&
-    typeof candidate.tag === "string" &&
-    typeof candidate.time === "string" &&
-    taskFilterTimes.has(candidate.time) &&
-    typeof candidate.group === "string";
-}
-
-export function taskFiltersForHistoryEntry(
-  pathname: string,
-  search: string,
-  state: unknown,
-): TaskFilters {
-  if (viewForPathname(pathname) !== "tasks") return { ...emptyFilters };
-  const stored = state && typeof state === "object" && !Array.isArray(state)
-    ? (state as Record<string, unknown>)[taskFiltersHistoryKey]
-    : null;
-  const filters = isTaskFilters(stored) ? stored : emptyFilters;
-  return {
-    ...filters,
-    group: taskGroupFromLocation(pathname, search),
-    temperature: taskTemperatureFromLocation(pathname, search),
-  };
-}
-
-export function taskHistoryState(filters: TaskFilters, state: unknown): Record<string, unknown> {
-  const existing = state && typeof state === "object" && !Array.isArray(state)
-    ? state as Record<string, unknown>
-    : {};
-  return { ...existing, [taskFiltersHistoryKey]: { ...filters } };
-}
-
-export function shouldPushTaskGroupNavigation(
-  pathname: string,
-  search: string,
-  currentGroup: TaskFilters["group"],
-  nextGroup: TaskFilters["group"],
-  temperature: TaskFilters["temperature"] = "all",
-): boolean {
-  return currentGroup !== nextGroup ||
-    `${pathname}${search}` !== taskGroupPath(nextGroup, temperature);
-}
-
-export function shouldPushTaskTemperatureNavigation(
-  pathname: string,
-  search: string,
-  group: TaskFilters["group"],
-  currentTemperature: TaskFilters["temperature"],
-  nextTemperature: TaskFilters["temperature"],
-): boolean {
-  return currentTemperature !== nextTemperature ||
-    `${pathname}${search}` !== taskGroupPath(group, nextTemperature);
-}
-
-export function TaskGroupSidebar({
-  items,
-  selected,
-  expanded,
-  onToggle,
-  onSelect,
-}: {
-  items: readonly TaskGroupNavigationItem[];
-  selected: TaskFilters["group"] | null;
-  expanded: boolean;
-  onToggle: () => void;
-  onSelect: (group: TaskFilters["group"]) => void;
-}): ReactElement {
-  return (
-    <section className="sidebar-task-groups" aria-label="任务分组">
-      <button
-        type="button"
-        className="sidebar-task-groups-toggle"
-        aria-expanded={expanded}
-        aria-controls="sidebar-task-group-list"
-        onClick={onToggle}
-      >
-        <span>任务分组</span>
-        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-      </button>
-      {expanded && (
-        <div id="sidebar-task-group-list" className="sidebar-task-group-list" role="group" aria-label="按任务分组筛选">
-          {items.map((item) => {
-            const active = selected === item.id;
-            const style = item.color
-              ? ({ "--sidebar-group-color": item.color } as SidebarGroupStyle)
-              : undefined;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={`sidebar-task-group-link ${active ? "active" : ""}`}
-                style={style}
-                aria-label={`${item.label}，${item.count} 项任务`}
-                aria-pressed={active}
-                onClick={() => onSelect(item.id)}
-              >
-                <i
-                  className={`sidebar-task-group-dot ${item.color ? "is-custom" : `is-${item.id}`}`}
-                  aria-hidden="true"
-                />
-                <span>{item.label}</span>
-                <small>{item.count}</small>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-export function TemperatureSidebar({
-  items,
-  selected,
-  expanded,
-  onToggle,
-  onSelect,
-}: {
-  items: readonly TemperatureNavigationItem[];
-  selected: TaskFilters["temperature"];
-  expanded: boolean;
-  onToggle: () => void;
-  onSelect: (temperature: TaskFilters["temperature"]) => void;
-}): ReactElement {
-  return (
-    <section className="sidebar-task-groups sidebar-temperatures" aria-label="温度分布">
-      <button
-        type="button"
-        className="sidebar-task-groups-toggle"
-        aria-expanded={expanded}
-        aria-controls="sidebar-temperature-list"
-        onClick={onToggle}
-      >
-        <span>温度分布</span>
-        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-      </button>
-      {expanded && (
-        <div id="sidebar-temperature-list" className="sidebar-task-group-list" role="group" aria-label="按温度筛选">
-          {items.map((item) => {
-            const active = selected === item.id;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={`sidebar-task-group-link sidebar-temperature-link is-${item.id} ${active ? "active" : ""}`}
-                aria-label={`${item.label}，${item.count} 项任务`}
-                aria-pressed={active}
-                onClick={() => onSelect(item.id)}
-              >
-                <i className={`sidebar-temperature-dot is-${item.id}`} aria-hidden="true" />
-                <span>{item.label}</span>
-                <small>{item.count}</small>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function initialView(): View {
+function initialView(): AppView {
   return viewForPathname(window.location.pathname);
 }
 
-function initialTaskFilters(): TaskFilters {
+function initialTaskFilters(): AppTaskFilters {
   return taskFiltersForHistoryEntry(
     window.location.pathname,
     window.location.search,
@@ -357,10 +89,8 @@ function initialTaskFilters(): TaskFilters {
   );
 }
 
-function reviewRoute(): { type: "daily" | "weekly" | "monthly"; date: string } {
-  const [, , rawType, rawDate] = window.location.pathname.split("/");
-  const type = rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
-  return { type, date: /^\d{4}-\d{2}-\d{2}$/.test(rawDate ?? "") ? rawDate! : todayKey() };
+function reviewRoute(): AppReviewRoute {
+  return reviewRouteForPathname(window.location.pathname, todayKey());
 }
 
 function replaceTask(items: Task[], next: Task): Task[] {
@@ -368,12 +98,7 @@ function replaceTask(items: Task[], next: Task): Task[] {
 }
 
 function belongsToToday(task: Task): boolean {
-  const today = todayKey();
-  const plannedDate = task.plannedDate?.slice(0, 10);
-  const deadline = task.deadline?.slice(0, 10);
-  if (task.status === "archived" || task.status === "abandoned") return false;
-  if (task.status === "completed") return plannedDate === today;
-  return plannedDate === today || Boolean(deadline && deadline <= today);
+  return taskBelongsToDate(task, todayKey());
 }
 
 function waitForMotion(duration: number): Promise<void> {
@@ -383,10 +108,21 @@ function waitForMotion(duration: number): Promise<void> {
 }
 
 export function App(): ReactElement {
+  const { renderers } = useLifeOSUI();
+  const {
+    TaskBoard: TaskBoardRenderer,
+    TaskRow: TaskRowRenderer,
+    AppSidebar: AppSidebarRenderer,
+    TaskDrawer: TaskDrawerRenderer,
+    AiDrawer: AiDrawerRenderer,
+    RulesDrawer: RulesDrawerRenderer,
+    CalendarView: CalendarRenderer,
+    GanttView: GanttRenderer,
+  } = renderers;
   const [api] = useState<LifeOSApi>(() => createApi());
   const [demoMode] = useState(!hasConfiguredApi);
-  const [view, setView] = useState<View>(initialView);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [view, setView] = useState<AppView>(initialView);
+  const [loadState, setLoadState] = useState<AppLoadState>("loading");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [todayTasks, setTodayTasks] = useState<Task[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -394,7 +130,7 @@ export function App(): ReactElement {
   const [review, setReview] = useState(reviewRoute);
   const [cards, setCards] = useState<AiCard[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
-  const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
+  const [filters, setFilters] = useState<AppTaskFilters>(initialTaskFilters);
   const [taskGroupsLoaded, setTaskGroupsLoaded] = useState(false);
   const [taskGroupsExpanded, setTaskGroupsExpanded] = useState(true);
   const [temperaturesExpanded, setTemperaturesExpanded] = useState(true);
@@ -420,39 +156,23 @@ export function App(): ReactElement {
   const loadData = useCallback(
     async (targetApi: LifeOSApi = api): Promise<void> => {
       setLoadState("loading");
-      const [taskResult, dayResult, cardResult, ruleResult, goalResult, groupResult] = await Promise.allSettled([
-        targetApi.getTasks(),
-        targetApi.getDay(todayKey()),
-        targetApi.getCards(),
-        targetApi.getRules(),
-        targetApi.getGoals(),
-        targetApi.getTaskGroups(),
-      ]);
-      if (taskResult.status === "rejected") {
+      const result = await loadApplicationData(targetApi, todayKey());
+      if (result.status === "error") {
         setLoadState("error");
         return;
       }
-      setTasks(taskResult.value);
-      const dayItems = dayResult.status === "fulfilled"
-        ? dayResult.value
-        : taskResult.value.filter(belongsToToday);
-      const completedToday = taskResult.value.filter(
-        (task) => task.status === "completed" && task.plannedDate?.slice(0, 10) === todayKey(),
-      );
-      setTodayTasks(
-        [...dayItems, ...completedToday.filter(
-          (task) => !dayItems.some((item) => item.id === task.id),
-        )].sort((left, right) => left.rank - right.rank),
-      );
-      setCards(cardResult.status === "fulfilled" ? cardResult.value : []);
-      setRules(ruleResult.status === "fulfilled" ? ruleResult.value : []);
-      setGoals(goalResult.status === "fulfilled" ? goalResult.value : []);
-      if (groupResult.status === "fulfilled") {
-        setTaskGroups(groupResult.value);
+      const { snapshot } = result;
+      setTasks(snapshot.tasks);
+      setTodayTasks(snapshot.todayTasks);
+      setCards(snapshot.cards);
+      setRules(snapshot.rules);
+      setGoals(snapshot.goals);
+      if (snapshot.taskGroups) {
+        setTaskGroups(snapshot.taskGroups);
         setTaskGroupsLoaded(true);
       }
-      setAiDegraded(cardResult.status === "rejected");
-      setRulesError(ruleResult.status === "rejected");
+      setAiDegraded(snapshot.aiDegraded);
+      setRulesError(snapshot.rulesError);
       setLoadState("ready");
     },
     [api],
@@ -528,18 +248,18 @@ export function App(): ReactElement {
   );
   const temperatureItems = useMemo(() => temperatureNavigationItems(tasks), [tasks]);
 
-  function navigate(next: View, replace = false): void {
-    const nextFilters = { ...emptyFilters };
+  function navigate(next: AppView, replace = false): void {
+    const nextFilters = { ...emptyTaskFilters };
     setView(next);
     setFilters(nextFilters);
-    const path = next === "review" ? `/review/${review.type}/${review.date}` : `/${next}`;
+    const path = pathForView(next, review);
     const state = next === "tasks" ? taskHistoryState(nextFilters, {}) : {};
     window.history[replace ? "replaceState" : "pushState"](state, "", path);
   }
 
   function navigateToTaskGroup(
-    group: TaskFilters["group"],
-    nextFilters: TaskFilters = taskFiltersForGroup(filters, group),
+    group: AppTaskFilters["group"],
+    nextFilters: AppTaskFilters = taskFiltersForGroup(filters, group),
   ): void {
     if (
       view === "tasks" &&
@@ -562,8 +282,8 @@ export function App(): ReactElement {
   }
 
   function navigateToTaskTemperature(
-    temperature: TaskFilters["temperature"],
-    nextFilters: TaskFilters = taskFiltersForTemperature(filters, temperature),
+    temperature: AppTaskFilters["temperature"],
+    nextFilters: AppTaskFilters = taskFiltersForTemperature(filters, temperature),
   ): void {
     if (
       view === "tasks" &&
@@ -585,7 +305,7 @@ export function App(): ReactElement {
     );
   }
 
-  function changeTaskFilters(nextFilters: TaskFilters): void {
+  function changeTaskFilters(nextFilters: AppTaskFilters): void {
     if (nextFilters.group !== filters.group) {
       navigateToTaskGroup(nextFilters.group, nextFilters);
       return;
@@ -969,84 +689,45 @@ export function App(): ReactElement {
     }
   }
 
-  const pendingCards = cards.filter(
+  const pendingCardCount = cards.filter(
     (card) => card.status === "pending" || card.status === "discussing",
   ).length;
-  const settingsActive = isSettingsArea(view);
-  const viewsActive = isViewsArea(view);
   const selectedTaskGroupItem = taskGroupItems.find((item) => item.id === filters.group)
     ?? taskGroupItems[0];
+  const shellViewModel: AppShellViewModel = {
+    view,
+    loadState,
+    review,
+    filters,
+    offline,
+    demoMode,
+    settingsActive: isSettingsArea(view),
+    viewsActive: isViewsArea(view),
+    activeTaskCount: tasks.filter((task) => ["todo", "in_progress"].includes(task.status)).length,
+    pendingCardCount,
+    taskGroups: taskGroupItems,
+    temperatures: temperatureItems,
+    selectedTaskGroup: selectedTaskGroupItem,
+  };
+  const shellActions: AppShellActions = {
+    navigate,
+    navigateToTaskGroup,
+    navigateToTaskTemperature,
+    changeTaskFilters,
+    openAi: () => setAiOpen(true),
+    openRules: () => setRulesOpen(true),
+    openTask: (task) => setSelectedTaskId(task.id),
+  };
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><i /></span>
-          <div><strong>LifeOS</strong><small>把时间留给重要的事</small></div>
-        </div>
-        <nav className="primary-nav" aria-label="主导航">
-          <button
-            type="button"
-            className={["tasks", "today", "review"].includes(view) ? "active" : ""}
-            aria-current={["tasks", "today", "review"].includes(view) ? "page" : undefined}
-            onClick={() => navigate("tasks")}
-          >
-            <span aria-hidden="true">☰</span>
-            <span>任务</span>
-            <small>{tasks.filter((task) => ["todo", "in_progress"].includes(task.status)).length}</small>
-          </button>
-          <button
-            type="button"
-            className={viewsActive ? "active" : ""}
-            aria-current={viewsActive ? "page" : undefined}
-            onClick={() => {
-              if (!viewsActive) navigate("calendar");
-            }}
-          >
-            <span aria-hidden="true">▦</span><span>视图</span>
-          </button>
-        </nav>
-        <div className="sidebar-section">
-          <span className="sidebar-label">协同</span>
-          <button type="button" className="sidebar-link" onClick={() => setAiOpen(true)}>
-            <span><CoachIcon /></span>
-            <span>AI 教练</span>
-            {pendingCards > 0 && <small className="nav-badge">{pendingCards}</small>}
-          </button>
-        </div>
-        <div className="sidebar-section">
-          <span className="sidebar-label">系统</span>
-          <button
-            type="button"
-            className={`sidebar-link ${settingsActive ? "active" : ""}`}
-            aria-current={settingsActive ? "page" : undefined}
-            onClick={() => navigate("settings")}
-          >
-            <span><SettingsIcon /></span>
-            <span>设置</span>
-          </button>
-        </div>
-        <TaskGroupSidebar
-          items={taskGroupItems}
-          selected={view === "tasks" ? filters.group : null}
-          expanded={taskGroupsExpanded}
-          onToggle={() => setTaskGroupsExpanded((current) => !current)}
-          onSelect={navigateToTaskGroup}
-        />
-        <TemperatureSidebar
-          items={temperatureItems}
-          selected={filters.temperature}
-          expanded={temperaturesExpanded}
-          onToggle={() => setTemperaturesExpanded((current) => !current)}
-          onSelect={(temperature) => changeTaskFilters(
-            taskFiltersForTemperature(filters, temperature),
-          )}
-        />
-        <div className="sidebar-foot">
-          <span className="avatar">Y</span>
-          <div><strong>我的 LifeOS</strong><small>{demoMode ? "本地演示数据" : "已连接私有服务"}</small></div>
-          <span className={`connection-dot ${offline ? "offline" : ""}`} title={offline ? "离线" : "在线"} />
-        </div>
-      </aside>
+      <AppSidebarRenderer
+        viewModel={shellViewModel}
+        actions={shellActions}
+        taskGroupsExpanded={taskGroupsExpanded}
+        temperaturesExpanded={temperaturesExpanded}
+        onTaskGroupsExpandedChange={setTaskGroupsExpanded}
+        onTemperaturesExpandedChange={setTemperaturesExpanded}
+      />
 
       <main className="main-content">
         {(offline || demoMode) && loadState === "ready" && (
@@ -1060,12 +741,12 @@ export function App(): ReactElement {
             <div className="mobile-task-filters">
               <label
                 className="mobile-task-facet-filter mobile-task-group-filter"
-                style={selectedTaskGroupItem?.color
-                  ? ({ "--sidebar-group-color": selectedTaskGroupItem.color } as SidebarGroupStyle)
+                style={shellViewModel.selectedTaskGroup?.color
+                  ? ({ "--sidebar-group-color": shellViewModel.selectedTaskGroup.color } as SidebarGroupStyle)
                   : undefined}
               >
                 <i
-                  className={`sidebar-task-group-dot ${selectedTaskGroupItem?.color ? "is-custom" : `is-${filters.group}`}`}
+                  className={`sidebar-task-group-dot ${shellViewModel.selectedTaskGroup?.color ? "is-custom" : `is-${filters.group}`}`}
                   aria-hidden="true"
                 />
                 <select
@@ -1084,7 +765,7 @@ export function App(): ReactElement {
                   aria-label="移动端温度"
                   value={filters.temperature}
                   onChange={(event) => navigateToTaskTemperature(
-                    event.target.value as TaskFilters["temperature"],
+                    event.target.value as AppTaskFilters["temperature"],
                   )}
                 >
                   {temperatureItems.map((item) => (
@@ -1095,8 +776,8 @@ export function App(): ReactElement {
             </div>
           )}
           <div>
-            <button className="icon-button" onClick={() => setAiOpen(true)} aria-label="AI 教练建议"><CoachIcon /></button>
-            <button className={`icon-button ${settingsActive ? "active" : ""}`} onClick={() => navigate("settings")} aria-label="设置" aria-current={settingsActive ? "page" : undefined}><SettingsIcon /></button>
+            <button className="icon-button" onClick={shellActions.openAi} aria-label="AI 教练建议"><CoachIcon /></button>
+            <button className={`icon-button ${shellViewModel.settingsActive ? "active" : ""}`} onClick={() => shellActions.navigate("settings")} aria-label="设置" aria-current={shellViewModel.settingsActive ? "page" : undefined}><SettingsIcon /></button>
           </div>
         </div>
         {loadState === "loading" && (
@@ -1132,7 +813,7 @@ export function App(): ReactElement {
               onReview={navigateReview}
               onToast={setToast}
             />
-            <TaskBoard
+            <TaskBoardRenderer
               view="today"
               tasks={todayTasks}
               allTasks={tasks}
@@ -1146,14 +827,15 @@ export function App(): ReactElement {
               onUpdate={safeTaskUpdate}
               onInheritParent={inheritParentTask}
               completionMotions={completionMotions}
-              onOpen={(task) => setSelectedTaskId(task.id)}
+              onOpen={shellActions.openTask}
               onReorder={reorderTasks}
               onViewChange={(nextView) => navigate(nextView)}
+              renderers={{ TaskRow: TaskRowRenderer }}
             />
           </>
         )}
         {loadState === "ready" && view === "tasks" && (
-          <TaskBoard
+          <TaskBoardRenderer
             view="tasks"
             tasks={tasks}
             allTasks={tasks}
@@ -1167,33 +849,34 @@ export function App(): ReactElement {
             onUpdate={safeTaskUpdate}
             onInheritParent={inheritParentTask}
             completionMotions={completionMotions}
-            onOpen={(task) => setSelectedTaskId(task.id)}
+            onOpen={shellActions.openTask}
             onReorder={reorderTasks}
             onViewChange={(nextView) => navigate(nextView)}
+            renderers={{ TaskRow: TaskRowRenderer }}
           />
         )}
         {loadState === "ready" && view === "calendar" && (
-          <CalendarView
+          <CalendarRenderer
             api={api}
             tasks={tasks}
-            onOpen={(task) => setSelectedTaskId(task.id)}
+            onOpen={shellActions.openTask}
             onTaskSaved={acceptExternalTask}
             onToast={setToast}
             onViewChange={(nextView: "calendar" | "gantt") => navigate(nextView)}
           />
         )}
         {loadState === "ready" && view === "gantt" && (
-          <GanttView
+          <GanttRenderer
             api={api}
             goals={goals}
             taskRevision={tasks.map((task) => `${task.id}:${task.version}:${task.groupId ?? ""}`).join("|")}
-            onOpen={(task) => setSelectedTaskId(task.id)}
+            onOpen={shellActions.openTask}
             onTaskSaved={acceptExternalTask}
             onToast={setToast}
             onViewChange={(nextView: "calendar" | "gantt") => navigate(nextView)}
           />
         )}
-        {loadState === "ready" && view === "goals" && <GoalsView api={api} onOpenTask={(task) => setSelectedTaskId(task.id)} onToast={setToast} onGoalsChange={setGoals} onBack={() => navigate("settings", true)} />}
+        {loadState === "ready" && view === "goals" && <GoalsView api={api} onOpenTask={shellActions.openTask} onToast={setToast} onGoalsChange={setGoals} onBack={() => shellActions.navigate("settings", true)} />}
         {loadState === "ready" && view === "review" && <ReviewView api={api} type={review.type} date={review.date} onBack={() => navigate("today")} onToast={setToast} />}
         {loadState === "ready" && view === "settings" && (
           <section className="board settings-page">
@@ -1213,7 +896,7 @@ export function App(): ReactElement {
                 </span>
                 <i aria-hidden="true">›</i>
               </button>
-              <button type="button" className="settings-item" onClick={() => setRulesOpen(true)}>
+              <button type="button" className="settings-item" onClick={shellActions.openRules}>
                 <span className="settings-item-icon" aria-hidden="true">⌘</span>
                 <span>
                   <strong>规则</strong>
@@ -1230,25 +913,25 @@ export function App(): ReactElement {
         <button
           className={["tasks", "today", "review"].includes(view) ? "active" : ""}
           aria-current={["tasks", "today", "review"].includes(view) ? "page" : undefined}
-          onClick={() => navigate("tasks")}
+          onClick={() => shellActions.navigate("tasks")}
         >
           <span>☰</span><small>任务</small>
         </button>
         <button
-          className={viewsActive ? "active" : ""}
-          aria-current={viewsActive ? "page" : undefined}
+          className={shellViewModel.viewsActive ? "active" : ""}
+          aria-current={shellViewModel.viewsActive ? "page" : undefined}
           onClick={() => {
-            if (!viewsActive) navigate("calendar");
+            if (!shellViewModel.viewsActive) shellActions.navigate("calendar");
           }}
         >
           <span>▦</span><small>视图</small>
         </button>
-        <button className={settingsActive ? "active" : ""} aria-current={settingsActive ? "page" : undefined} onClick={() => navigate("settings")}>
+        <button className={shellViewModel.settingsActive ? "active" : ""} aria-current={shellViewModel.settingsActive ? "page" : undefined} onClick={() => shellActions.navigate("settings")}>
           <SettingsIcon /><small>设置</small>
         </button>
       </nav>
 
-      <TaskDrawer
+      <TaskDrawerRenderer
         task={selectedTask}
         api={api}
         taskGroups={taskGroups}
@@ -1260,7 +943,7 @@ export function App(): ReactElement {
         goals={goals}
         onStructureChanged={() => loadData(api)}
       />
-      <AiDrawer
+      <AiDrawerRenderer
         open={aiOpen}
         cards={cards}
         degraded={aiDegraded}
@@ -1272,7 +955,7 @@ export function App(): ReactElement {
         onSend={sendMessage}
         onGenerate={generateSummary}
       />
-      <RulesDrawer
+      <RulesDrawerRenderer
         open={rulesOpen}
         rules={rules}
         error={rulesError}

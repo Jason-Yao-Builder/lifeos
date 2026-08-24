@@ -1,83 +1,14 @@
-:root {
-  color-scheme: light;
-  font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: #1f2c26;
-  background: #edf1eb;
-  font-synthesis: none;
-  --ink: #1f2c26;
-  --muted: #718078;
-  --line: #dfe5dd;
-  --surface: #fbfcf9;
-  --canvas: #f3f5f1;
-  --green: #276b52;
-  --green-dark: #1f513f;
-  --green-soft: #e3efe8;
-  --shadow: 0 20px 55px rgba(36, 54, 44, 0.13);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  min-height: 100%;
-  margin: 0;
-}
-
-body {
-  min-width: 320px;
-  background: var(--canvas);
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-.sr-only {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  border: 0;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-
-button,
-select {
-  cursor: pointer;
-}
-
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 3px solid rgba(53, 133, 99, 0.25);
-  outline-offset: 2px;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
+@layer components {
 .app-shell {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: var(--ui-size-sidebar) minmax(0, 1fr);
 }
 
 .sidebar {
   position: sticky;
   top: 0;
-  z-index: 4;
+  z-index: var(--ui-z-sticky);
   display: flex;
   height: 100vh;
   flex-direction: column;
@@ -103,7 +34,7 @@ button:disabled {
   height: 34px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 11px;
+  border-radius: var(--ui-radius-md);
   background: var(--ink);
   box-shadow: 0 8px 18px rgba(31, 44, 38, 0.19);
 }
@@ -150,17 +81,17 @@ button:disabled {
 .sidebar-link {
   display: grid;
   width: 100%;
-  min-height: 44px;
+  min-height: var(--ui-size-control-lg);
   grid-template-columns: 24px 1fr auto;
   align-items: center;
   gap: 7px;
   padding: 0 12px;
   border: 0;
-  border-radius: 11px;
+  border-radius: var(--ui-radius-md);
   color: #5d6b63;
   background: transparent;
   text-align: left;
-  transition: 160ms ease;
+  transition: var(--ui-duration-normal) var(--ui-ease-standard);
 }
 
 .primary-nav button:hover,
@@ -408,7 +339,7 @@ button:disabled {
 }
 
 .board {
-  width: min(1180px, 100%);
+  width: min(var(--ui-size-content-max), 100%);
   margin: 0 auto;
   padding: 54px 52px 80px;
 }
@@ -1295,7 +1226,7 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
 
 .drawer-layer {
   position: fixed;
-  z-index: 30;
+  z-index: var(--ui-z-drawer);
   inset: 0;
 }
 
@@ -2098,7 +2029,7 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
 
 .toast {
   position: fixed;
-  z-index: 60;
+  z-index: var(--ui-z-toast);
   right: 24px;
   bottom: 22px;
   display: flex;
@@ -2354,7 +2285,7 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
 .goal-card > footer strong { color: var(--green); font-size: 16px; }
 .goal-card > footer span { color: #8e9992; font-size: 8px; }
 .goal-card > footer button { border: 0; color: var(--green); background: transparent; font-size: 8px; font-weight: 750; }
-.v02-modal-layer { position: fixed; z-index: 80; inset: 0; }
+.v02-modal-layer { position: fixed; z-index: var(--ui-z-modal); inset: 0; }
 .v02-modal-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(25,36,30,.38); backdrop-filter: blur(3px); }
 .v02-modal,
 .v02-panel { position: absolute; z-index: 1; top: 50%; left: 50%; overflow: auto; width: min(520px, calc(100vw - 30px)); max-height: min(780px, calc(100vh - 30px)); padding: 24px; border: 1px solid #d9e1d9; border-radius: 18px; background: #fbfcf9; box-shadow: 0 28px 80px rgba(21,36,28,.28); transform: translate(-50%,-50%); }
@@ -2520,7 +2451,7 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
 .dependency-add { align-items: start; }
 .dependency-combobox { position: relative; min-width: 0; }
 .dependency-combobox > input { width: 100%; }
-.dependency-options { position: absolute; z-index: 12; top: calc(100% + 5px); right: 0; left: 0; overflow-y: auto; max-height: 230px; padding: 5px; border: 1px solid #d8e1da; border-radius: 9px; background: #fff; box-shadow: 0 14px 32px rgba(39,60,49,.16); }
+.dependency-options { position: absolute; z-index: var(--ui-z-popover); top: calc(100% + 5px); right: 0; left: 0; overflow-y: auto; max-height: 230px; padding: 5px; border: 1px solid #d8e1da; border-radius: 9px; background: #fff; box-shadow: 0 14px 32px rgba(39,60,49,.16); }
 .dependency-options > button { display: grid; width: 100%; gap: 3px; padding: 8px 9px; border: 0; border-radius: 7px; color: #44534b; background: transparent; text-align: left; }
 .dependency-options > button strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .dependency-options > button small { overflow: hidden; color: #87938b; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -2616,7 +2547,7 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
   .mobile-topbar > div:last-child { display: flex; gap: 7px; }
   .mobile-nav {
     position: fixed;
-    z-index: 20;
+    z-index: var(--ui-z-overlay);
     right: 12px;
     bottom: 10px;
     left: 12px;
@@ -2819,17 +2750,6 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
   .skeleton-filter { width: 75%; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
 .quick-group-layout {
   grid-template-columns: 28px minmax(180px, 1fr) 84px minmax(140px, 170px) 150px auto;
 }
@@ -2949,4 +2869,5 @@ input[type="date"]::-webkit-datetime-edit-day-field:focus {
   .quick-group-picker { grid-template-columns: 1fr; }
   .quick-group-picker button { height: 32px; }
   .detail-group-picker { grid-template-columns: 1fr; }
+}
 }

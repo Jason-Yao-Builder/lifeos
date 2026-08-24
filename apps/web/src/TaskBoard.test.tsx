@@ -14,7 +14,7 @@ import {
   TaskBoard,
   taskCompletionMotionDuration,
 } from "./TaskBoard";
-import type { TaskCompletionMotion, TaskFilters } from "./TaskBoard";
+import type { TaskBoardRenderers, TaskCompletionMotion, TaskFilters } from "./TaskBoard";
 import type { Task, TaskGroup } from "./types";
 import { calculateCompositeScore, todayKey } from "./utils";
 
@@ -45,6 +45,7 @@ function renderBoard(
   groupFilter = "all",
   allTasks: Task[] = tasks,
   temperatureFilter: TaskFilters["temperature"] = "all",
+  renderers?: Partial<TaskBoardRenderers>,
 ): string {
   return renderToStaticMarkup(
     <TaskBoard
@@ -77,11 +78,29 @@ function renderBoard(
       completionMotions={completionMotions}
       onOpen={() => undefined}
       onReorder={async () => undefined}
+      {...(renderers ? { renderers } : {})}
     />,
   );
 }
 
 describe("TaskBoard completion motion", () => {
+  it("accepts a task-row renderer without changing board orchestration", () => {
+    const html = renderBoard(
+      [unscoredTask],
+      "today",
+      {},
+      [],
+      "all",
+      [unscoredTask],
+      "all",
+      { TaskRow: ({ task }) => <div data-custom-task-row={task.id}>{task.title}</div> },
+    );
+
+    expect(html).toContain('data-custom-task-row="task-unscored"');
+    expect(html).toContain("未评分任务");
+    expect(html).not.toContain('class="task-row');
+  });
+
   it("keeps the source row visually completed and inert while it exits", () => {
     const activeTask = { ...unscoredTask, status: "in_progress" as const };
     const html = renderBoard([activeTask], "tasks", { [activeTask.id]: "exiting" });

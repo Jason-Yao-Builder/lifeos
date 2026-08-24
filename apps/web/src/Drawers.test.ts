@@ -168,6 +168,7 @@ describe("TaskStructure", () => {
     }));
 
     expect(html).toContain("返回父任务：季度发布计划");
+    expect(html).toContain('data-slot="task-drawer"');
     expect(html).toContain('aria-label="任务分组"');
     expect(html).toContain("产品迭代");
     expect(html.indexOf("返回父任务：季度发布计划")).toBeLessThan(html.indexOf("详情"));

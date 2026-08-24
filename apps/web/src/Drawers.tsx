@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   DragEvent as ReactDragEvent,
@@ -11,23 +11,15 @@ import type { LifeOSApi } from "./api";
 import { CoachIcon } from "./Icons";
 import { TaskGroupCreator } from "./TaskBoard";
 import type {
-  AiCard,
-  Goal,
-  RepeatTemplate,
   Rule,
   Task,
   TaskDependency,
-  TaskEvent,
-  TaskGroup,
   TaskImage,
-  TaskProgress,
   TaskStatus,
   Temperature,
-  UpdateTask,
 } from "./types";
 import {
   cardTypeLabels,
-  mergeTags,
   openDatePicker,
   readableValue,
   relativeTime,
@@ -35,12 +27,32 @@ import {
   statusTransitions,
   temperatureLabels,
 } from "./utils";
-import { hierarchyDepth, reorderTaskIds, taskDropPosition, taskTreeRows } from "./v02-utils";
+import { reorderTaskIds, taskDropPosition, taskTreeRows } from "./v02-utils";
 import type { TaskDropPosition } from "./v02-utils";
+import type {
+  AiDrawerProps,
+  RulesDrawerProps,
+  TaskDrawerProps,
+  TaskStructureProps,
+} from "./features/drawers/contracts";
+import {
+  projectTaskStructure,
+  taskParent,
+} from "./features/drawers/model";
+import { useTaskDrawerController } from "./features/drawers/useTaskDrawerController";
+import { useTaskStructureController } from "./features/drawers/useTaskStructureController";
+
+export type {
+  AiDrawerProps,
+  RulesDrawerProps,
+  TaskDrawerProps,
+  TaskStructureProps,
+} from "./features/drawers/contracts";
 
 interface DrawerShellProps {
   open: boolean;
   title: string;
+  slot: "task-drawer" | "ai-drawer" | "rules-drawer";
   eyebrow?: string;
   wide?: boolean;
   onClose: () => void;
@@ -50,6 +62,7 @@ interface DrawerShellProps {
 function DrawerShell({
   open,
   title,
+  slot,
   eyebrow,
   wide,
   onClose,
@@ -68,7 +81,11 @@ function DrawerShell({
   return (
     <div className="drawer-layer" role="presentation">
       <button className="drawer-backdrop" aria-label="关闭抽屉" onClick={onClose} />
-      <aside className={`drawer ${wide ? "drawer-wide" : ""}`} aria-label={title}>
+      <aside
+        className={`drawer ${wide ? "drawer-wide" : ""}`}
+        aria-label={title}
+        data-slot={slot}
+      >
         <header className="drawer-header">
           <div>
             {eyebrow && <p className="eyebrow">{eyebrow}</p>}
@@ -80,35 +97,6 @@ function DrawerShell({
       </aside>
     </div>
   );
-}
-
-interface TaskDrawerProps {
-  task: Task | null;
-  api: LifeOSApi;
-  onClose: () => void;
-  onSave: (task: Task, patch: UpdateTask) => Promise<void>;
-  onOpenTask: (taskId: string) => void;
-  allTasks: Task[];
-  goals: Goal[];
-  taskGroups: TaskGroup[];
-  onCreateTaskGroup: (input: Pick<TaskGroup, "name" | "color">) => Promise<TaskGroup>;
-  onStructureChanged: () => Promise<void>;
-}
-
-function taskDraft(task: Task | null): UpdateTask {
-  return task
-    ? {
-        title: task.title,
-        description: task.description,
-        temperature: task.temperature,
-        status: task.status,
-        deadline: task.deadline?.slice(0, 10) ?? null,
-        plannedDate: task.plannedDate?.slice(0, 10) ?? null,
-        goalId: task.goalId ?? null,
-        groupId: task.groupId ?? null,
-        tags: task.tags,
-      }
-    : {};
 }
 
 const TASK_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -170,18 +158,7 @@ export interface DependencyCandidateOption {
 
 export type SubtaskReorderKey = "ArrowUp" | "ArrowDown" | "Home" | "End";
 
-export function knownDirectSubtasks(parentId: string, tasks: readonly Task[]): Task[] {
-  return tasks
-    .filter((task) => task.parentTaskId === parentId)
-    .sort((left, right) => left.rank - right.rank);
-}
-
-export function subtasksAfterLoad(
-  current: readonly Task[],
-  result: PromiseSettledResult<Task[]>,
-): Task[] {
-  return result.status === "fulfilled" ? result.value : [...current];
-}
+export { knownDirectSubtasks, subtasksAfterLoad } from "./features/drawers/model";
 
 export function reorderSubtaskIds(
   orderedIds: readonly string[],
@@ -529,33 +506,26 @@ function DescriptionImagesEditor({
 }
 
 export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, goals, taskGroups, onCreateTaskGroup, onStructureChanged }: TaskDrawerProps): ReactElement | null {
-  const [tab, setTab] = useState<"details" | "structure" | "history">("details");
-  const [draft, setDraft] = useState<UpdateTask>(() => taskDraft(task));
-  const [history, setHistory] = useState<TaskEvent[]>([]);
-  const [historyState, setHistoryState] = useState<"idle" | "loading" | "error">("idle");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [tagInput, setTagInput] = useState("");
-  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
-  const previousTaskId = useRef<string | null>(null);
-
-  useEffect(() => {
-    setDraft(taskDraft(task));
-    if (!task || previousTaskId.current === null) setTab("details");
-    setError("");
-    setTagInput("");
-    setGroupCreatorOpen(false);
-    previousTaskId.current = task?.id ?? null;
-  }, [task]);
-
-  function commitTags(): void {
-    if (!tagInput.trim()) return;
-    setDraft((current) => ({
-      ...current,
-      tags: mergeTags(current.tags ?? [], tagInput),
-    }));
-    setTagInput("");
-  }
+  const { viewModel, actions } = useTaskDrawerController({ task, api, onSave, onClose });
+  const {
+    tab,
+    draft,
+    history,
+    historyState,
+    saving,
+    error,
+    tagInput,
+    groupCreatorOpen,
+  } = viewModel;
+  const {
+    setTab,
+    patchDraft,
+    setTagInput,
+    commitTags,
+    removeTag,
+    setGroupCreatorOpen,
+    submit,
+  } = actions;
 
   function handleTagKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
     if (event.nativeEvent.isComposing) return;
@@ -565,56 +535,18 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
     }
   }
 
-  useEffect(() => {
-    if (!task || tab !== "history") return;
-    let active = true;
-    setHistoryState("loading");
-    void api
-      .getTaskEvents(task.id)
-      .then((events) => {
-        if (!active) return;
-        setHistory(events);
-        setHistoryState("idle");
-      })
-      .catch(() => {
-        if (active) setHistoryState("error");
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, tab, task]);
-
-  async function submit(event: FormEvent): Promise<void> {
+  function submitForm(event: FormEvent): void {
     event.preventDefault();
-    if (!task) return;
-    if (!draft.title?.trim()) {
-      setError("任务名称不能为空");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(task, {
-        ...draft,
-        title: draft.title.trim(),
-        tags: mergeTags(draft.tags ?? [], tagInput),
-      });
-      onClose();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "保存失败");
-    } finally {
-      setSaving(false);
-    }
+    void submit();
   }
 
-  const drawerParentTask = task?.parentTaskId
-    ? allTasks.find((candidate) => candidate.id === task.parentTaskId)
-    : null;
+  const drawerParentTask = taskParent(task, allTasks);
 
   return (
     <DrawerShell
       open={Boolean(task)}
       title={task?.title ?? "任务详情"}
+      slot="task-drawer"
       eyebrow="任务档案"
       wide
       onClose={onClose}
@@ -667,12 +599,12 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
         </button>
       </div>
       {tab === "details" ? (
-        <form className="drawer-body detail-form" onSubmit={submit}>
+        <form className="drawer-body detail-form" onSubmit={submitForm}>
           <label className="field field-full">
             <span>任务名称</span>
             <input
               value={draft.title ?? ""}
-              onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+              onChange={(event) => patchDraft({ title: event.target.value })}
             />
           </label>
           {task && (
@@ -681,7 +613,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               task={task}
               api={api}
               value={draft.description ?? ""}
-              onChange={(description) => setDraft((current) => ({ ...current, description }))}
+              onChange={(description) => patchDraft({ description })}
             />
           )}
           <div className="field-grid">
@@ -690,7 +622,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               <select
                 value={draft.temperature ?? "warm"}
                 onChange={(event) =>
-                  setDraft({ ...draft, temperature: event.target.value as Temperature })
+                  patchDraft({ temperature: event.target.value as Temperature })
                 }
               >
                 {Object.entries(temperatureLabels).map(([value, label]) => (
@@ -703,7 +635,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               <select
                 value={draft.status ?? "todo"}
                 onChange={(event) =>
-                  setDraft({ ...draft, status: event.target.value as TaskStatus })
+                  patchDraft({ status: event.target.value as TaskStatus })
                 }
               >
                 {task && [task.status, ...statusTransitions[task.status]].map((value) => (
@@ -729,7 +661,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               <input
                 type="date"
                 value={draft.deadline ?? ""}
-                onChange={(event) => setDraft({ ...draft, deadline: event.target.value || null })}
+                onChange={(event) => patchDraft({ deadline: event.target.value || null })}
               />
             </label>
             <label
@@ -750,7 +682,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               <input
                 type="date"
                 value={draft.plannedDate ?? ""}
-                onChange={(event) => setDraft({ ...draft, plannedDate: event.target.value || null })}
+                onChange={(event) => patchDraft({ plannedDate: event.target.value || null })}
               />
             </label>
             <label className="field">
@@ -761,7 +693,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               <span>关联目标</span>
               <select
                 value={draft.goalId ?? ""}
-                onChange={(event) => setDraft({ ...draft, goalId: event.target.value || null })}
+                onChange={(event) => patchDraft({ goalId: event.target.value || null })}
               >
                 <option value="">未关联目标</option>
                 {goals.filter((goal) => goal.status === "active").map((goal) => (
@@ -775,10 +707,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                 <select
                   aria-label="任务分组"
                   value={draft.groupId ?? ""}
-                  onChange={(event) => setDraft({
-                    ...draft,
-                    groupId: event.target.value || null,
-                  })}
+                  onChange={(event) => patchDraft({ groupId: event.target.value || null })}
                 >
                   <option value="">未分组</option>
                   {taskGroups.map((group) => (
@@ -799,7 +728,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                   variant="detail"
                   onCreate={onCreateTaskGroup}
                   onCreated={(group) => {
-                    setDraft((current) => ({ ...current, groupId: group.id }));
+                    patchDraft({ groupId: group.id });
                     setGroupCreatorOpen(false);
                   }}
                   onCancel={() => setGroupCreatorOpen(false)}
@@ -817,10 +746,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                     <button
                       type="button"
                       aria-label={`移除标签 ${tag}`}
-                      onClick={() => setDraft((current) => ({
-                        ...current,
-                        tags: (current.tags ?? []).filter((item) => item !== tag),
-                      }))}
+                      onClick={() => removeTag(tag)}
                     >×</button>
                   </span>
                 ))}
@@ -906,64 +832,39 @@ export function TaskStructure({
   allTasks,
   onOpenTask,
   onChanged,
-}: {
-  task: Task;
-  api: LifeOSApi;
-  allTasks: Task[];
-  onOpenTask: (taskId: string, targetTab: "details" | "structure") => void;
-  onChanged: () => Promise<void>;
-}): ReactElement {
-  const [subtasks, setSubtasks] = useState<Task[]>(() => knownDirectSubtasks(task.id, allTasks));
-  const [subtaskLoadState, setSubtaskLoadState] = useState<"loading" | "ready" | "error">("loading");
-  const [dependencies, setDependencies] = useState<TaskDependency[]>([]);
-  const [progress, setProgress] = useState<TaskProgress>({ completed: 0, total: 0, percent: 0 });
-  const [templates, setTemplates] = useState<RepeatTemplate[]>([]);
+}: TaskStructureProps): ReactElement {
+  const { viewState, actions } = useTaskStructureController({ task, api, allTasks, onChanged });
+  const {
+    subtasks,
+    subtaskLoadState,
+    dependencies,
+    progress,
+    templates,
+    busy,
+    reordering,
+    reorderNotice,
+    error,
+  } = viewState;
+  const {
+    clearError,
+    addSubtask,
+    persistSubtaskOrder,
+    addDependency,
+    removeDependency,
+    createRepeat,
+    generateRepeat,
+  } = actions;
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [predecessorId, setPredecessorId] = useState("");
   const [dependencyQuery, setDependencyQuery] = useState("");
   const [dependencyOpen, setDependencyOpen] = useState(false);
   const [activeDependencyIndex, setActiveDependencyIndex] = useState(0);
   const [cronExpr, setCronExpr] = useState("0 9 * * 1");
-  const [busy, setBusy] = useState(false);
-  const [reordering, setReordering] = useState(false);
   const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
   const [subtaskDropTarget, setSubtaskDropTarget] = useState<{
     id: string;
     position: TaskDropPosition;
   } | null>(null);
-  const [reorderNotice, setReorderNotice] = useState("");
-  const [error, setError] = useState("");
-  const structureRequestId = useRef(0);
-
-  const loadStructure = useCallback(async (): Promise<void> => {
-    const requestId = ++structureRequestId.current;
-    setError("");
-    setSubtaskLoadState("loading");
-    const [subtaskResult, dependencyResult, progressResult, templateResult] = await Promise.allSettled([
-      api.getSubtasks(task.id),
-      api.getDependencies(task.id),
-      api.getTaskProgress(task.id),
-      api.getRepeatTemplates(),
-    ]);
-    if (requestId !== structureRequestId.current) return;
-    setSubtasks((current) => subtasksAfterLoad(current, subtaskResult));
-    if (subtaskResult.status === "fulfilled") {
-      setSubtaskLoadState("ready");
-    } else {
-      setSubtaskLoadState("error");
-    }
-    if (dependencyResult.status === "fulfilled") setDependencies(dependencyResult.value);
-    if (progressResult.status === "fulfilled") setProgress(progressResult.value);
-    if (templateResult.status === "fulfilled") setTemplates(templateResult.value);
-    if ([subtaskResult, dependencyResult, progressResult].some((result) => result.status === "rejected")) setError("部分结构数据暂时无法读取。");
-  }, [api, task.id]);
-
-  useEffect(() => {
-    void loadStructure();
-    return () => {
-      structureRequestId.current += 1;
-    };
-  }, [loadStructure]);
 
   useEffect(() => {
     setPredecessorId("");
@@ -971,59 +872,6 @@ export function TaskStructure({
     setDependencyOpen(false);
     setActiveDependencyIndex(0);
   }, [task.id]);
-
-  async function addSubtask(): Promise<void> {
-    if (!subtaskTitle.trim() || hierarchyDepth(task, allTasks) >= 3) return;
-    setBusy(true);
-    try {
-      await api.createSubtask(task.id, {
-        title: subtaskTitle.trim(),
-        temperature: task.temperature,
-        plannedDate: task.plannedDate,
-      });
-      setSubtaskTitle("");
-      await Promise.all([loadStructure(), onChanged()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "子任务创建失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function persistSubtaskOrder(nextIds: string[]): Promise<void> {
-    const currentIds = subtasks.map((item) => item.id);
-    if (
-      reordering ||
-      nextIds.length !== currentIds.length ||
-      nextIds.every((id, index) => id === currentIds[index])
-    ) return;
-    const previous = subtasks;
-    const byId = new Map(previous.map((item) => [item.id, item]));
-    const optimistic = nextIds.map((id) => byId.get(id)).filter((item): item is Task => Boolean(item));
-    if (optimistic.length !== previous.length) return;
-    setSubtasks(optimistic);
-    setReordering(true);
-    setError("");
-    setReorderNotice("正在保存子任务顺序…");
-    try {
-      const saved = await api.reorderSubtasks(task.id, nextIds);
-      setSubtasks(saved);
-      setSubtaskLoadState("ready");
-      setReorderNotice("子任务顺序已保存。");
-    } catch (reason) {
-      setSubtasks(previous);
-      setError(reason instanceof Error ? reason.message : "子任务排序失败，已恢复原顺序");
-      setReorderNotice("排序失败，已恢复原顺序。");
-      return;
-    } finally {
-      setReordering(false);
-    }
-    try {
-      await onChanged();
-    } catch {
-      setError("子任务顺序已保存，但任务列表暂时无法刷新。");
-    }
-  }
 
   function handleSubtaskKeyboard(
     event: ReactKeyboardEvent<HTMLButtonElement>,
@@ -1081,73 +929,52 @@ export function TaskStructure({
     ));
   }
 
-  async function addDependency(): Promise<void> {
-    if (!predecessorId) return;
-    setBusy(true);
-    try {
-      await api.addDependency(task.id, predecessorId);
-      setPredecessorId("");
-      setDependencyQuery("");
-      setDependencyOpen(false);
-      await Promise.all([loadStructure(), onChanged()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "依赖创建失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeDependency(dependencyId: string): Promise<void> {
-    setBusy(true);
-    try {
-      await api.deleteDependency(task.id, dependencyId);
-      await Promise.all([loadStructure(), onChanged()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "依赖删除失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function createRepeat(): Promise<void> {
-    const validationError = cronExpressionError(cronExpr);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setBusy(true);
-    try {
-      const template = await api.createRepeatTemplate({
-        title: task.title,
-        description: task.description,
-        temperature: task.temperature,
-        tags: task.tags,
-        goalId: task.goalId ?? null,
-        cronExpr: cronExpr.trim(),
-      });
-      await api.updateTask(task.id, task.version, { repeatTemplateId: template.id });
-      await Promise.all([loadStructure(), onChanged()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "重复模板创建失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const depth = hierarchyDepth(task, allTasks);
-  const parentTask = task.parentTaskId
-    ? allTasks.find((item) => item.id === task.parentTaskId)
-    : null;
+  const structure = useMemo(() => projectTaskStructure({
+    task,
+    allTasks,
+    subtasks,
+    dependencies,
+    templates,
+    progress,
+    subtaskLoadState,
+    reordering,
+  }), [
+    allTasks,
+    dependencies,
+    progress,
+    reordering,
+    subtaskLoadState,
+    subtasks,
+    task,
+    templates,
+  ]);
+  const {
+    depth,
+    parentTask,
+    incomingDependencies,
+    relatedTemplate,
+    canReorderSubtasks,
+    canCreateSubtask,
+    progressPercent,
+  } = structure;
   const candidateOptions = useMemo(
     () => dependencyCandidateOptions(task.id, allTasks, dependencies, dependencyQuery),
     [allTasks, dependencies, dependencyQuery, task.id],
   );
-  const incomingDependencies = dependencies.filter((item) => item.successorId === task.id);
   const visibleDependencyIndex = activeDependencyIndex < candidateOptions.length ? activeDependencyIndex : 0;
   const activeDependency = candidateOptions[visibleDependencyIndex];
   const cronError = cronExpressionError(cronExpr);
-  const relatedTemplate = templates.find((item) => item.id === task.repeatTemplateId);
-  const canReorderSubtasks = subtasks.length > 1 && subtaskLoadState !== "loading" && !reordering;
+
+  async function submitSubtask(): Promise<void> {
+    if (await addSubtask(subtaskTitle)) setSubtaskTitle("");
+  }
+
+  async function linkDependency(): Promise<void> {
+    if (!(await addDependency(predecessorId))) return;
+    setPredecessorId("");
+    setDependencyQuery("");
+    setDependencyOpen(false);
+  }
 
   function chooseDependency(option: DependencyCandidateOption): void {
     setPredecessorId(option.task.id);
@@ -1200,9 +1027,9 @@ export function TaskStructure({
       <section className="structure-section">
         <header>
           <div><h3>子任务</h3><p>当前层级 {depth} / 3</p></div>
-          <strong>{progress.percent}%</strong>
+          <strong>{progressPercent}%</strong>
         </header>
-        <div className="progress-track"><i style={{ width: `${progress.percent}%` }} /></div>
+        <div className="progress-track"><i style={{ width: `${progressPercent}%` }} /></div>
         <div
           className="subtask-list"
           aria-busy={subtaskLoadState === "loading" || reordering}
@@ -1259,7 +1086,7 @@ export function TaskStructure({
           })}
         </div>
         <p className="sr-only" role="status" aria-live="polite">{reorderNotice}</p>
-        {depth < 3 ? <><div className="structure-add"><input value={subtaskTitle} placeholder="添加一个子任务…" onChange={(event) => setSubtaskTitle(event.target.value)} /><button className="button button-secondary" disabled={busy || reordering || !subtaskTitle.trim()} onClick={() => void addSubtask()}>添加</button></div><p className="muted">新子任务会继承当前任务的标签与状态，创建后可单独修改。</p></> : <p className="structure-limit">已到达 3 层上限，请在现有层级中继续拆解。</p>}
+        {canCreateSubtask ? <><div className="structure-add"><input value={subtaskTitle} placeholder="添加一个子任务…" onChange={(event) => setSubtaskTitle(event.target.value)} /><button className="button button-secondary" disabled={busy || reordering || !subtaskTitle.trim()} onClick={() => void submitSubtask()}>添加</button></div><p className="muted">新子任务会继承当前任务的标签与状态，创建后可单独修改。</p></> : <p className="structure-limit">已到达 3 层上限，请在现有层级中继续拆解。</p>}
       </section>
       <section className="structure-section"><header><div><h3>前置依赖</h3><p>前置未完成时，任务会被阻塞。</p></div>{task.isBlocked && <strong className="blocked-label">🔒 已阻塞</strong>}</header>
         <div className="dependency-list">{incomingDependencies.length === 0 ? <p className="muted">没有前置任务。</p> : incomingDependencies.map((item) => {
@@ -1318,11 +1145,11 @@ export function TaskStructure({
               </div>
             )}
           </div>
-          <button type="button" className="button button-secondary" disabled={busy || !predecessorId} onClick={() => void addDependency()}>关联</button>
+          <button type="button" className="button button-secondary" disabled={busy || !predecessorId} onClick={() => void linkDependency()}>关联</button>
         </div>
       </section>
       <section className="structure-section"><header><div><h3>重复计划</h3><p>模板只负责生成实例，不改写历史任务。</p></div></header>
-        {relatedTemplate ? <div className="repeat-state"><strong>↻ {relatedTemplate.cronExpr}</strong><span>{relatedTemplate.enabled ? "已启用" : "已停用"}，最近生成 {relatedTemplate.lastGenerated ?? "—"}</span><button className="button button-secondary" onClick={() => void api.generateRepeatTemplate(relatedTemplate.id)}>立即生成</button></div> : (
+        {relatedTemplate ? <div className="repeat-state"><strong>↻ {relatedTemplate.cronExpr}</strong><span>{relatedTemplate.enabled ? "已启用" : "已停用"}，最近生成 {relatedTemplate.lastGenerated ?? "—"}</span><button className="button button-secondary" onClick={() => void generateRepeat(relatedTemplate.id)}>立即生成</button></div> : (
           <div className="repeat-editor">
             <label className="repeat-preset">
               <span>常用示例</span>
@@ -1331,7 +1158,7 @@ export function TaskStructure({
                 onChange={(event) => {
                   if (!event.target.value) return;
                   setCronExpr(event.target.value);
-                  setError("");
+                  clearError();
                 }}
               >
                 <option value="">选择一个常用规则…</option>
@@ -1347,11 +1174,11 @@ export function TaskStructure({
                   aria-describedby={`cron-help${cronError ? " cron-error" : ""}`}
                   onChange={(event) => {
                     setCronExpr(event.target.value);
-                    setError("");
+                    clearError();
                   }}
                 />
               </label>
-              <button type="button" className="button button-secondary" disabled={busy || Boolean(cronError)} onClick={() => void createRepeat()}>创建重复模板</button>
+              <button type="button" className="button button-secondary" disabled={busy || Boolean(cronError)} onClick={() => void createRepeat(cronExpr)}>创建重复模板</button>
             </div>
             <div className="cron-guide" id="cron-help">
               <div className="cron-field-order" aria-label="Cron 字段顺序">
@@ -1366,19 +1193,6 @@ export function TaskStructure({
       </section>
     </div>
   );
-}
-
-interface AiDrawerProps {
-  open: boolean;
-  cards: AiCard[];
-  degraded: boolean;
-  demoMode: boolean;
-  generating: boolean;
-  onClose: () => void;
-  onDecision: (card: AiCard, decision: "accept" | "reject") => Promise<void>;
-  onDiscuss: (card: AiCard, message: string) => Promise<void>;
-  onSend: (card: AiCard, content: string) => Promise<void>;
-  onGenerate: () => Promise<void>;
 }
 
 export function AiDrawer({
@@ -1426,6 +1240,7 @@ export function AiDrawer({
     <DrawerShell
       open={open}
       title={selected ? selected.title : "AI 教练"}
+      slot="ai-drawer"
       eyebrow={selected ? "与这张卡继续聊" : "人做最终决定"}
       wide
       onClose={selected ? () => setSelectedId(null) : onClose}
@@ -1549,20 +1364,6 @@ export function AiDrawer({
   );
 }
 
-interface RulesDrawerProps {
-  open: boolean;
-  rules: Rule[];
-  error: boolean;
-  evaluating: boolean;
-  onClose: () => void;
-  onUpdate: (
-    rule: Rule,
-    patch: Partial<Pick<Rule, "enabled" | "parameters">>,
-  ) => Promise<void>;
-  onEvaluate: () => Promise<void>;
-  onRetry: () => Promise<void>;
-}
-
 function RuleCard({
   rule,
   onUpdate,
@@ -1634,7 +1435,7 @@ export function RulesDrawer({
   onRetry,
 }: RulesDrawerProps): ReactElement | null {
   return (
-    <DrawerShell open={open} title="自动化规则" eyebrow="让系统守住底线" onClose={onClose}>
+    <DrawerShell open={open} title="自动化规则" slot="rules-drawer" eyebrow="让系统守住底线" onClose={onClose}>
       <div className="drawer-body rules-panel">
         <div className="rules-intro">
           <p>规则只在明确条件下执行，每次变更都会留下历史。</p>

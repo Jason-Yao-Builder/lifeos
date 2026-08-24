@@ -1,0 +1,22 @@
+@layer themes {
+:root[data-theme="lifeos"] {
+  color-scheme: light;
+  --ui-color-text: #1f2c26;
+  --ui-color-text-muted: #718078;
+  --ui-color-text-subtle: #8a968e;
+  --ui-color-border: #dfe5dd;
+  --ui-color-border-strong: #c5cec7;
+  --ui-color-surface: #fbfcf9;
+  --ui-color-surface-subtle: #f8faf7;
+  --ui-color-document: #edf1eb;
+  --ui-color-canvas: #f3f5f1;
+  --ui-color-accent: #276b52;
+  --ui-color-accent-strong: #1f513f;
+  --ui-color-accent-soft: #e3efe8;
+  --ui-color-on-accent: #fff;
+  --ui-color-danger: #a94b3f;
+  --ui-color-focus-ring: rgba(53, 133, 99, 0.25);
+  --ui-color-overlay: rgba(31, 44, 38, 0.32);
+  --ui-font-family-sans: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+}
