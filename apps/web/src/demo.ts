@@ -8,6 +8,7 @@ import type {
   Task,
   TaskDependency,
   TaskEvent,
+  TaskGroup,
   TaskImage,
   UploadTaskImageInput,
 } from "./types";
@@ -16,6 +17,7 @@ import { calculateCriticalPath, goalProgress, projectCalendar } from "./v02-util
 
 interface DemoStore {
   tasks: Task[];
+  taskGroups: TaskGroup[];
   cards: AiCard[];
   rules: Rule[];
   events: Record<string, TaskEvent[]>;
@@ -42,6 +44,24 @@ function stamp(offsetMinutes = 0): string {
 }
 
 function seedStore(): DemoStore {
+  const taskGroups: TaskGroup[] = [
+    {
+      id: "group-product",
+      workspaceId: "demo-workspace",
+      name: "产品迭代",
+      color: "#2F6B52",
+      createdAt: stamp(-13_000),
+      updatedAt: stamp(-13_000),
+    },
+    {
+      id: "group-health",
+      workspaceId: "demo-workspace",
+      name: "健康节奏",
+      color: "#4D7C8A",
+      createdAt: stamp(-12_500),
+      updatedAt: stamp(-12_500),
+    },
+  ];
   const tasks: Task[] = [
     {
       id: "task-proposal",
@@ -56,6 +76,7 @@ function seedStore(): DemoStore {
       startAt: `${localDate()}T09:00:00+08:00`,
       endAt: `${localDate(2)}T18:00:00+08:00`,
       goalId: "goal-product",
+      groupId: "group-product",
       tags: ["项目", "深度工作"],
       score: 92,
       rank: 0,
@@ -75,6 +96,7 @@ function seedStore(): DemoStore {
       startAt: `${localDate()}T18:00:00+08:00`,
       endAt: `${localDate()}T19:00:00+08:00`,
       goalId: "goal-health",
+      groupId: "group-health",
       tags: ["健康"],
       score: 76,
       rank: 1,
@@ -95,6 +117,7 @@ function seedStore(): DemoStore {
       endAt: `${localDate(2)}T17:00:00+08:00`,
       goalId: "goal-product",
       parentTaskId: "task-proposal",
+      groupId: "group-product",
       tags: ["学习"],
       score: 65,
       rank: 2,
@@ -114,6 +137,7 @@ function seedStore(): DemoStore {
       startAt: `${localDate(2)}T09:00:00+08:00`,
       endAt: `${localDate(3)}T18:00:00+08:00`,
       goalId: "goal-product",
+      groupId: "group-product",
       tags: ["关系"],
       score: 58,
       rank: 3,
@@ -130,6 +154,7 @@ function seedStore(): DemoStore {
       hardness: "soft",
       deadline: null,
       plannedDate: null,
+      groupId: null,
       tags: ["兴趣"],
       score: 31,
       rank: 4,
@@ -146,6 +171,7 @@ function seedStore(): DemoStore {
       hardness: "soft",
       deadline: null,
       plannedDate: null,
+      groupId: null,
       tags: ["心愿"],
       score: 18,
       rank: 5,
@@ -293,7 +319,7 @@ function seedStore(): DemoStore {
       updatedAt: stamp(-12_000),
     },
   ];
-  return { tasks, cards, rules, events, goals, dependencies, templates, reviews: [] };
+  return { tasks, taskGroups, cards, rules, events, goals, dependencies, templates, reviews: [] };
 }
 
 function loadStore(): DemoStore {
@@ -303,7 +329,11 @@ function loadStore(): DemoStore {
     const parsed = JSON.parse(value) as Partial<DemoStore>;
     const seeded = seedStore();
     return {
-      tasks: parsed.tasks ?? seeded.tasks,
+      tasks: (parsed.tasks ?? seeded.tasks).map((task) => ({
+        ...task,
+        groupId: task.groupId ?? null,
+      })),
+      taskGroups: parsed.taskGroups ?? seeded.taskGroups,
       cards: parsed.cards ?? seeded.cards,
       rules: parsed.rules ?? seeded.rules,
       events: parsed.events ?? seeded.events,
@@ -410,6 +440,28 @@ export function createDemoApi(): LifeOSApi {
     return task;
   }
 
+  function taskGroupById(id: string): TaskGroup {
+    const group = store.taskGroups.find((item) => item.id === id);
+    if (!group) throw new Error("任务分组不存在");
+    return group;
+  }
+
+  function normalizedGroupName(name: string, excludedId?: string): string {
+    const normalized = name.trim();
+    if (!normalized || normalized.length > 100) throw new Error("分组名称长度需为 1 到 100 个字符");
+    if (store.taskGroups.some((group) =>
+      group.id !== excludedId && group.name.toLocaleLowerCase() === normalized.toLocaleLowerCase())) {
+      throw new Error("已存在同名分组");
+    }
+    return normalized;
+  }
+
+  function normalizedGroupColor(color: string): string {
+    const normalized = color.trim().toUpperCase();
+    if (!/^#[0-9A-F]{6}$/.test(normalized)) throw new Error("分组颜色必须是 #RRGGBB");
+    return normalized;
+  }
+
   function addEvent(
     task: Task,
     field: string,
@@ -447,6 +499,7 @@ export function createDemoApi(): LifeOSApi {
       return pause(items.sort((a, b) => a.rank - b.rank), 360);
     },
     async createTask(input) {
+      if (input.groupId !== null && input.groupId !== undefined) taskGroupById(input.groupId);
       const task: Task = {
         id: crypto.randomUUID(),
         version: 1,
@@ -457,6 +510,7 @@ export function createDemoApi(): LifeOSApi {
         hardness: input.deadline ? "hard" : "soft",
         deadline: input.deadline ?? null,
         plannedDate: input.plannedDate ?? null,
+        groupId: input.groupId ?? null,
         tags: input.tags ?? [],
         scoreDimensions: input.scoreDimensions ?? null,
         score: input.scoreDimensions ? calculateCompositeScore(input.scoreDimensions) : 50,
@@ -472,6 +526,7 @@ export function createDemoApi(): LifeOSApi {
     async updateTask(id, version, patch) {
       const current = taskById(id);
       if (current.version !== version) throw new Error("任务已在其他地方更新，请刷新后重试");
+      if (patch.groupId !== null && patch.groupId !== undefined) taskGroupById(patch.groupId);
       const next: Task = {
         ...current,
         ...patch,
@@ -486,6 +541,35 @@ export function createDemoApi(): LifeOSApi {
         }
       });
       store.tasks = store.tasks.map((task) => (task.id === id ? next : task));
+      saveStore(store);
+      return pause(next, 120);
+    },
+    async inheritParentTask(id, version) {
+      const current = taskById(id);
+      if (current.version !== version) throw new Error("任务已在其他地方更新，请刷新后重试");
+      if (!current.parentTaskId) throw new Error("顶层任务没有可继承的父任务");
+      const parent = taskById(current.parentTaskId);
+      const next: Task = {
+        ...current,
+        groupId: parent.groupId ?? null,
+        tags: [...parent.tags],
+        scoreDimensions: parent.scoreDimensions ? { ...parent.scoreDimensions } : null,
+        score: parent.score,
+        version: current.version + 1,
+        updatedAt: stamp(),
+      };
+      addEvent(next, "parent_inheritance", {
+        groupId: current.groupId,
+        tags: current.tags,
+        scoreDimensions: current.scoreDimensions,
+        score: current.score,
+      }, {
+        groupId: next.groupId,
+        tags: next.tags,
+        scoreDimensions: next.scoreDimensions,
+        score: next.score,
+      }, "继承父任务的分组、标签与评分");
+      store.tasks = store.tasks.map((task) => task.id === id ? next : task);
       saveStore(store);
       return pause(next, 120);
     },
@@ -511,6 +595,37 @@ export function createDemoApi(): LifeOSApi {
       });
       saveStore(store);
       return pause([...store.tasks].sort((left, right) => left.rank - right.rank), 120);
+    },
+    async getTaskGroups() {
+      return pause([...store.taskGroups]
+        .sort((left, right) => left.name.localeCompare(right.name, "zh-CN")), 80);
+    },
+    async createTaskGroup(input) {
+      const createdAt = stamp();
+      const group: TaskGroup = {
+        id: crypto.randomUUID(),
+        workspaceId: "demo-workspace",
+        name: normalizedGroupName(input.name),
+        color: normalizedGroupColor(input.color),
+        createdAt,
+        updatedAt: createdAt,
+      };
+      store.taskGroups.push(group);
+      saveStore(store);
+      return pause(group, 80);
+    },
+    async updateTaskGroup(id, patch) {
+      const current = taskGroupById(id);
+      if (patch.name === undefined && patch.color === undefined) throw new Error("至少提供一项分组变更");
+      const updated: TaskGroup = {
+        ...current,
+        ...(patch.name === undefined ? {} : { name: normalizedGroupName(patch.name, id) }),
+        ...(patch.color === undefined ? {} : { color: normalizedGroupColor(patch.color) }),
+        updatedAt: stamp(),
+      };
+      store.taskGroups = store.taskGroups.map((group) => group.id === id ? updated : group);
+      saveStore(store);
+      return pause(updated, 80);
     },
     async getTaskEvents(id) {
       return pause(store.events[id] ?? [], 240);
@@ -778,9 +893,10 @@ export function createDemoApi(): LifeOSApi {
         plannedDate: input.plannedDate ?? null,
         parentTaskId: id,
         goalId: parent.goalId ?? null,
+        groupId: parent.groupId ?? null,
         tags: [...parent.tags],
-        scoreDimensions: input.scoreDimensions ?? null,
-        score: input.scoreDimensions ? calculateCompositeScore(input.scoreDimensions) : 50,
+        scoreDimensions: parent.scoreDimensions ? { ...parent.scoreDimensions } : null,
+        score: parent.score,
         rank: store.tasks.length,
         completedAt: parent.status === "completed" ? createdAt : null,
         createdAt,

@@ -40,6 +40,15 @@ export interface UploadTaskImageInput {
   dataBase64: string;
 }
 
+export interface TaskGroup {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Task {
   id: string;
   version: number;
@@ -53,6 +62,7 @@ export interface Task {
   startAt?: string | null;
   endAt?: string | null;
   parentTaskId?: string | null;
+  groupId: string | null;
   goalId?: string | null;
   repeatTemplateId?: string | null;
   plannedStartTime?: string | null;
@@ -76,6 +86,7 @@ export interface CreateTask {
   status?: TaskStatus;
   deadline?: string | null;
   plannedDate?: string | null;
+  groupId?: string | null;
   tags?: string[];
   scoreDimensions?: TaskScoreDimensions | null;
 }
@@ -92,6 +103,7 @@ export type UpdateTask = Partial<
     | "startAt"
     | "endAt"
     | "parentTaskId"
+    | "groupId"
     | "goalId"
     | "repeatTemplateId"
     | "tags"

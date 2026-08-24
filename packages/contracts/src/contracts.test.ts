@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApiErrorSchema,
+  CreateSubtaskInputSchema,
+  CreateTaskGroupInputSchema,
   CreateTaskInputSchema,
   LocalDateSchema,
   RuleProposalSchema,
   TaskDtoSchema,
+  TaskGroupSchema,
+  UpdateTaskGroupInputSchema,
   UpdateTaskInputSchema,
 } from './index.js';
 
@@ -23,6 +27,7 @@ describe('task contracts', () => {
       startAt: null,
       endAt: null,
       estimatedMinutes: null,
+      groupId: null,
       goalId: null,
       repeatTemplateId: null,
       parentTaskId: null,
@@ -37,6 +42,16 @@ describe('task contracts', () => {
     const dimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
     expect(CreateTaskInputSchema.parse({ title: 'Manual score', scoreDimensions: dimensions }).scoreDimensions).toEqual(dimensions);
     expect(CreateTaskInputSchema.safeParse({ title: 'Invalid score', scoreDimensions: { ...dimensions, impact: 101 } }).success).toBe(false);
+  });
+
+  it('keeps subtask score inheritance server-owned', () => {
+    expect(CreateSubtaskInputSchema.parse({ title: 'Child' })).toEqual(
+      expect.not.objectContaining({ scoreDimensions: expect.anything() }),
+    );
+    expect(CreateSubtaskInputSchema.safeParse({
+      title: 'Forged child score',
+      scoreDimensions: { impact: 1, urgency: 2, alignment: 3, effort: 4 },
+    }).success).toBe(false);
   });
 
   it('accepts bounded manual score dimensions on update without an ambiguous clear', () => {
@@ -74,6 +89,7 @@ describe('task contracts', () => {
       startAt: null,
       endAt: null,
       estimatedMinutes: 60,
+      groupId: null,
       goalId: null,
       repeatTemplateId: null,
       parentTaskId: null,
@@ -94,6 +110,30 @@ describe('task contracts', () => {
     });
 
     expect(parsed.hardness).toBe('hard');
+  });
+});
+
+describe('task group contracts', () => {
+  it('trims names, normalizes colors, and stays strict', () => {
+    expect(CreateTaskGroupInputSchema.parse({ name: '  Work  ', color: '#a1b2c3' }))
+      .toEqual({ name: 'Work', color: '#A1B2C3' });
+    expect(CreateTaskGroupInputSchema.safeParse({ name: 'Work', color: '#12345' }).success)
+      .toBe(false);
+    expect(CreateTaskGroupInputSchema.safeParse({ name: 'Work', color: '#123456', extra: true }).success)
+      .toBe(false);
+    expect(UpdateTaskGroupInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('validates stable task group metadata', () => {
+    const group = TaskGroupSchema.parse({
+      id: 'group-1',
+      workspaceId: 'workspace-1',
+      name: 'Work',
+      color: '#aabbcc',
+      createdAt: '2026-08-24T08:00:00.000Z',
+      updatedAt: '2026-08-24T08:00:00.000Z',
+    });
+    expect(group.color).toBe('#AABBCC');
   });
 });
 

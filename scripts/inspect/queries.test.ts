@@ -6,7 +6,12 @@ describe('maintenance inspection queries', () => {
   it('prints complete state counts including soft-deleted tasks', () => {
     const database = createDatabase({ filename: ':memory:' });
     try {
-      const task = database.store.tasks.create({ title: 'inspect me', temperature: 'hot' });
+      const taskGroup = database.store.taskGroups.create({ name: 'inspect group', color: '#4D7C8A' });
+      const task = database.store.tasks.create({
+        title: 'inspect me',
+        temperature: 'hot',
+        groupId: taskGroup.id,
+      });
       const goal = database.store.goals.create({ title: 'inspect goal' });
       const template = database.store.repeatTemplates.create({
         title: 'inspect repeat',
@@ -29,14 +34,21 @@ describe('maintenance inspection queries', () => {
       const state = inspectState(database, 10);
       expect(state.tasks).toMatchObject({ total: 1, active: 0, softDeleted: 1 });
       expect(state.tasks.byStatus).toEqual({ archived: 1 });
+      expect(state.tasks.recent).toEqual([
+        expect.objectContaining({ id: task.id, groupId: taskGroup.id }),
+      ]);
       expect(state.taskImages).toEqual({
         available: true,
         count: 1,
         totalBytes: 12,
         migrationHint: null,
       });
-      expect(state.events.total).toBe(6);
-      expect(state.events.recent).toHaveLength(6);
+      expect(state.taskGroups).toMatchObject({
+        total: 1,
+        recent: [expect.objectContaining({ id: taskGroup.id, color: '#4D7C8A' })],
+      });
+      expect(state.events.total).toBe(7);
+      expect(state.events.recent).toHaveLength(7);
       expect(state.goals).toMatchObject({ total: 1, active: 1, byStatus: { active: 1 } });
       expect(state.repeatTemplates).toMatchObject({ total: 1, enabled: 1 });
       expect(state.reviews).toMatchObject({ total: 1, byType: { daily_plan: 1 } });
@@ -55,7 +67,8 @@ describe('maintenance inspection queries', () => {
       now: () => new Date(Date.UTC(2026, 7, 23, 0, 0, tick++)),
     });
     try {
-      const task = database.store.tasks.create({ title: 'timeline' });
+      const taskGroup = database.store.taskGroups.create({ name: 'timeline group', color: '#336699' });
+      const task = database.store.tasks.create({ title: 'timeline', groupId: taskGroup.id });
       const predecessor = database.store.tasks.create({ title: 'predecessor' });
       database.store.dependencies.create({ predecessorId: predecessor.id, successorId: task.id });
       database.store.tasks.update(DEFAULT_TENANT_ID, task.id, task.version, { status: 'in_progress' });
@@ -65,6 +78,7 @@ describe('maintenance inspection queries', () => {
       database.store.conversations.addMessage({ conversationId: conversation.id, role: 'user', content: 'why?' });
 
       const timeline = inspectTaskTimeline(database, task.id);
+      expect(timeline.task).toMatchObject({ id: task.id, groupId: taskGroup.id });
       expect(timeline.events.map((event) => event.type)).toEqual([
         'task.created',
         'task_dependency.created',

@@ -23,6 +23,7 @@ describe('subtask contracts', () => {
       { status: 'todo' },
       { tags: ['client-value'] },
       { parentTaskId: 'client-parent' },
+      { groupId: 'client-group' },
     ]) {
       expect(CreateSubtaskInputSchema.safeParse({ title: 'Child', ...protectedField }).success)
         .toBe(false);

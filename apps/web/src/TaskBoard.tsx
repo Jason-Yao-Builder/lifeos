@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CSSProperties,
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactElement,
 } from "react";
-import type { CreateTask, Task, TaskScoreDimensions, TaskStatus, Temperature, UpdateTask } from "./types";
+import type {
+  CreateTask,
+  Task,
+  TaskGroup,
+  TaskScoreDimensions,
+  TaskStatus,
+  Temperature,
+  UpdateTask,
+} from "./types";
 import {
   matchesTagKeyword,
   matchesTaskTimeFilter,
@@ -69,6 +79,31 @@ export function createScoreDimensionDraft(
   return { ...dimensions };
 }
 
+export function createScoreEditorState(
+  taskDimensions: TaskScoreDimensions | null | undefined,
+  parentDimensions: TaskScoreDimensions | null | undefined,
+): { draft: ScoreDimensionDraft; inheritsParent: boolean } {
+  const inheritsParent = parentDimensions !== null && parentDimensions !== undefined && (
+    !taskDimensions || sameScoreDimensions(taskDimensions, parentDimensions)
+  );
+  const dimensions = inheritsParent && parentDimensions
+    ? parentDimensions
+    : taskDimensions ?? defaultScoreDimensions;
+  return {
+    draft: createScoreDimensionDraft(dimensions),
+    inheritsParent,
+  };
+}
+
+export function claimParentInheritance(
+  parentTaskId: string | null | undefined,
+  pending: { current: boolean },
+): boolean {
+  if (!parentTaskId || pending.current) return false;
+  pending.current = true;
+  return true;
+}
+
 export function parseScoreDimensionDraftValue(
   rawValue: string,
   valueAsNumber: number,
@@ -98,6 +133,13 @@ export interface TaskFilters {
   status: "all" | TaskStatus;
   tag: string;
   time: TaskTimeFilter;
+  group: "all" | "ungrouped" | string;
+}
+
+export function matchesTaskGroupFilter(task: Task, group: TaskFilters["group"]): boolean {
+  if (group === "all") return true;
+  if (group === "ungrouped") return !task.groupId;
+  return task.groupId === group;
 }
 
 const queueGroups: Array<{ key: TaskQueueGroupKey; label: string }> = [
@@ -113,12 +155,20 @@ const queueGroups: Array<{ key: TaskQueueGroupKey; label: string }> = [
 interface TaskBoardProps {
   view: "tasks" | "today";
   tasks: Task[];
+  allTasks: Task[];
+  taskGroups: TaskGroup[];
   filters: TaskFilters;
   tags: string[];
   onViewChange: (view: "tasks" | "today") => void;
   onFiltersChange: (filters: TaskFilters) => void;
   onAdd: (input: CreateTask) => Promise<void>;
+  onCreateTaskGroup: (input: Pick<TaskGroup, "name" | "color">) => Promise<TaskGroup>;
+  onUpdateTaskGroup: (
+    id: string,
+    patch: Partial<Pick<TaskGroup, "name" | "color">>,
+  ) => Promise<TaskGroup>;
   onUpdate: (task: Task, patch: UpdateTask) => Promise<boolean | void>;
+  onInheritParent: (task: Task) => Promise<void>;
   completionMotions?: Readonly<Partial<Record<string, TaskCompletionMotion>>>;
   onOpen: (task: Task) => void;
   onReorder: (
@@ -149,6 +199,7 @@ interface QuickAddDraft {
   description: string;
   temperature: Temperature;
   deadline: string;
+  groupId: string;
   tags: string[];
   tagInput: string;
   manualScore: boolean;
@@ -165,20 +216,144 @@ export function buildQuickTaskInput(
     temperature: draft.temperature,
     deadline: draft.deadline || null,
     plannedDate: view === "today" ? todayKey() : null,
+    groupId: draft.groupId || null,
     tags: mergeTags(draft.tags, draft.tagInput),
     ...(draft.manualScore ? { scoreDimensions: draft.scoreDimensions } : {}),
   };
 }
 
+export const taskGroupColorPresets = [
+  "#2F6B52",
+  "#4D7C8A",
+  "#9A6A3A",
+  "#7A5FA3",
+  "#B04A5A",
+  "#526D9B",
+] as const;
+
+export function normalizeTaskGroupColor(value: string): string | null {
+  const normalized = value.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
+}
+
+export function buildTaskGroupUpdatePatch(
+  nameDraft: string,
+  colorDraft: string,
+): Pick<TaskGroup, "name" | "color"> | null {
+  const name = nameDraft.trim();
+  const color = normalizeTaskGroupColor(colorDraft);
+  return name && color ? { name, color } : null;
+}
+
+export function TaskGroupCreator({
+  idPrefix,
+  variant,
+  onCreate,
+  onCreated,
+  onCancel,
+}: {
+  idPrefix: string;
+  variant: "quick" | "detail";
+  onCreate: TaskBoardProps["onCreateTaskGroup"];
+  onCreated: (group: TaskGroup) => void;
+  onCancel: () => void;
+}): ReactElement {
+  const [name, setName] = useState("");
+  const [color, setColor] = useState<string>(taskGroupColorPresets[0]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const normalizedColor = normalizeTaskGroupColor(color);
+
+  async function create(): Promise<void> {
+    const normalizedName = name.trim();
+    if (!normalizedName || !normalizedColor) {
+      setError("请输入分组名称并选择有效颜色");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const created = await onCreate({ name: normalizedName, color: normalizedColor });
+      onCreated(created);
+      setName("");
+      setColor(taskGroupColorPresets[0]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "创建失败，输入已保留");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section
+      id={`${idPrefix}-creator`}
+      className={`${variant}-group-creator`}
+      aria-label="新建任务分组"
+    >
+      <label htmlFor={`${idPrefix}-name`}>
+        <span>分组名称</span>
+        <input
+          id={`${idPrefix}-name`}
+          value={name}
+          maxLength={100}
+          placeholder="例如：产品迭代"
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            void create();
+          }}
+        />
+      </label>
+      <fieldset>
+        <legend>分组颜色</legend>
+        <div className={`${variant}-group-colors`}>
+          {taskGroupColorPresets.map((preset) => (
+            <button
+              type="button"
+              key={preset}
+              className={`${variant}-group-color-option`}
+              style={{ "--task-group-option-color": preset } as CSSProperties}
+              aria-label={`选择颜色 ${preset}`}
+              aria-pressed={color === preset}
+              onClick={() => setColor(preset)}
+            />
+          ))}
+          <label className={`${variant}-group-custom-color`}>
+            <span>自定义色</span>
+            <input
+              type="color"
+              aria-label="自定义分组颜色"
+              value={normalizedColor ?? taskGroupColorPresets[0]}
+              onChange={(event) => setColor(event.target.value.toUpperCase())}
+            />
+          </label>
+        </div>
+      </fieldset>
+      {error && <p className={`${variant}-group-error`} role="alert">{error}</p>}
+      <div className={`${variant}-group-actions`}>
+        <button type="button" className="button button-secondary" disabled={saving} onClick={onCancel}>取消</button>
+        <button type="button" className="button button-primary" disabled={saving || !name.trim() || !normalizedColor} onClick={() => void create()}>
+          {saving ? "创建中…" : "创建分组"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function QuickAdd({
   view,
   onAdd,
-}: Pick<TaskBoardProps, "view" | "onAdd">): ReactElement {
+  taskGroups,
+  onCreateTaskGroup,
+}: Pick<TaskBoardProps, "view" | "onAdd" | "taskGroups" | "onCreateTaskGroup">): ReactElement {
   const [title, setTitle] = useState("");
   const [temperature, setTemperature] = useState<Temperature>(
     view === "today" ? "hot" : "warm",
   );
   const [deadline, setDeadline] = useState("");
+  const [groupId, setGroupId] = useState("");
+  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
@@ -222,6 +397,7 @@ function QuickAdd({
         description,
         temperature,
         deadline,
+        groupId,
         tags,
         tagInput,
         manualScore,
@@ -230,6 +406,8 @@ function QuickAdd({
       setTitle("");
       setDescription("");
       setDeadline("");
+      setGroupId("");
+      setGroupCreatorOpen(false);
       setTags([]);
       setTagInput("");
       setAdvancedOpen(false);
@@ -246,7 +424,10 @@ function QuickAdd({
   const scorePreview = normalizeScoreDimensionDraft(scoreDraft);
 
   return (
-    <form className={`quick-add ${advancedOpen ? "has-advanced" : ""} ${invalid ? "is-invalid" : ""}`} onSubmit={submit}>
+    <form
+      className={`quick-add quick-group-layout ${groupCreatorOpen ? "quick-group-creating" : ""} ${advancedOpen ? "has-advanced" : ""} ${invalid ? "is-invalid" : ""}`}
+      onSubmit={submit}
+    >
       <span className="quick-add-plus" aria-hidden="true">＋</span>
       <input
         aria-label="新任务标题"
@@ -267,6 +448,24 @@ function QuickAdd({
           <option key={value} value={value}>{label}</option>
         ))}
       </select>
+      <div className="quick-group-picker">
+        <select
+          aria-label="新任务分组"
+          value={groupId}
+          onChange={(event) => setGroupId(event.target.value)}
+        >
+          <option value="">未分组</option>
+          {taskGroups.map((group) => (
+            <option value={group.id} key={group.id}>{group.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          aria-expanded={groupCreatorOpen}
+          aria-controls="quick-task-group-creator"
+          onClick={() => setGroupCreatorOpen((current) => !current)}
+        >新建分组</button>
+      </div>
       <label
         className="quick-date"
         onPointerDown={(event) => {
@@ -328,6 +527,18 @@ function QuickAdd({
         </div>
         <small aria-live="polite">{tags.length}/50</small>
       </div>
+      {groupCreatorOpen && (
+        <TaskGroupCreator
+          idPrefix="quick-task-group"
+          variant="quick"
+          onCreate={onCreateTaskGroup}
+          onCreated={(group) => {
+            setGroupId(group.id);
+            setGroupCreatorOpen(false);
+          }}
+          onCancel={() => setGroupCreatorOpen(false)}
+        />
+      )}
       {advancedOpen && (
         <section id="quick-add-advanced" className="quick-advanced" aria-label="新任务高级选项">
           <label className="quick-description" htmlFor="new-task-description">
@@ -396,6 +607,8 @@ function QuickAdd({
 
 interface TaskRowProps {
   task: Task;
+  parentTask: Task | null;
+  group: TaskGroup | null;
   depth: number;
   ancestorTitles: string[];
   lineageIssue: "missing" | "cycle" | null;
@@ -406,7 +619,9 @@ interface TaskRowProps {
   dropPosition: TaskDropPosition | null;
   completionMotion: TaskCompletionMotion | null;
   onUpdate: TaskBoardProps["onUpdate"];
+  onInheritParent: TaskBoardProps["onInheritParent"];
   onOpen: TaskBoardProps["onOpen"];
+  onSelectGroup: (groupId: string) => void;
   onToggleChildren: (taskId: string) => void;
   onDragStart: (event: DragEvent, id: string) => void;
   onDragEnd: () => void;
@@ -420,6 +635,8 @@ interface TaskRowProps {
 
 function TaskRow({
   task,
+  parentTask,
+  group,
   depth,
   ancestorTitles,
   lineageIssue,
@@ -430,7 +647,9 @@ function TaskRow({
   dropPosition,
   completionMotion,
   onUpdate,
+  onInheritParent,
   onOpen,
+  onSelectGroup,
   onToggleChildren,
   onDragStart,
   onDragEnd,
@@ -446,10 +665,17 @@ function TaskRow({
   const visualDone = done || completionMotion === "exiting" || completionMotion === "entering";
   const displayedStatus = completionMotion === "exiting" ? "completed" : task.status;
   const [scoreEditorOpen, setScoreEditorOpen] = useState(false);
-  const [scoreDraft, setScoreDraft] = useState<ScoreDimensionDraft>(
-    createScoreDimensionDraft(task.scoreDimensions ?? defaultScoreDimensions),
+  const initialScoreEditorState = createScoreEditorState(
+    task.scoreDimensions,
+    parentTask?.scoreDimensions,
+  );
+  const [scoreDraft, setScoreDraft] = useState<ScoreDimensionDraft>(initialScoreEditorState.draft);
+  const [inheritsParentScore, setInheritsParentScore] = useState(
+    initialScoreEditorState.inheritsParent,
   );
   const [scoreSaving, setScoreSaving] = useState(false);
+  const [inheritancePending, setInheritancePending] = useState(false);
+  const inheritancePendingRef = useRef(false);
   const [pendingScore, setPendingScore] = useState<{
     dimensions: TaskScoreDimensions;
     version: number;
@@ -482,21 +708,36 @@ function TaskRow({
     }
   }, [pendingScore, task.scoreDimensions, task.version]);
 
+  useEffect(() => {
+    if (!scoreEditorOpen || !inheritsParentScore) return;
+    if (parentTask?.scoreDimensions) {
+      setScoreDraft(createScoreDimensionDraft(parentTask.scoreDimensions));
+    } else {
+      setInheritsParentScore(false);
+    }
+  }, [inheritsParentScore, parentTask?.scoreDimensions, scoreEditorOpen]);
+
   function openScoreEditor(): void {
-    setScoreDraft(createScoreDimensionDraft(task.scoreDimensions ?? defaultScoreDimensions));
+    const initial = createScoreEditorState(task.scoreDimensions, parentTask?.scoreDimensions);
+    setScoreDraft(initial.draft);
+    setInheritsParentScore(initial.inheritsParent);
     setPendingScore(null);
     setScoreEditorOpen(true);
   }
 
   function cancelScoreEdit(): void {
-    setScoreDraft(createScoreDimensionDraft(task.scoreDimensions ?? defaultScoreDimensions));
+    const initial = createScoreEditorState(task.scoreDimensions, parentTask?.scoreDimensions);
+    setScoreDraft(initial.draft);
+    setInheritsParentScore(initial.inheritsParent);
     setPendingScore(null);
     setScoreEditorOpen(false);
   }
 
   async function saveScore(event: FormEvent): Promise<void> {
     event.preventDefault();
-    const requested = normalizeScoreDimensionDraft(scoreDraft);
+    const requested = inheritsParentScore && parentTask?.scoreDimensions
+      ? parentTask.scoreDimensions
+      : normalizeScoreDimensionDraft(scoreDraft);
     if (!requested) return;
     setScoreSaving(true);
     setPendingScore({ dimensions: requested, version: task.version });
@@ -509,11 +750,25 @@ function TaskRow({
     }
   }
 
+  async function inheritParent(event: ReactMouseEvent<HTMLButtonElement>): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!claimParentInheritance(task.parentTaskId, inheritancePendingRef)) return;
+    setInheritancePending(true);
+    try {
+      await onInheritParent(task);
+    } finally {
+      inheritancePendingRef.current = false;
+      setInheritancePending(false);
+    }
+  }
+
   const scorePreview = normalizeScoreDimensionDraft(scoreDraft);
 
   return (
     <article
-      className={`task-row task-depth-${depth} ${hasChildren ? "has-children" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
+      className={`task-row task-depth-${depth} ${group ? "task-group-row" : ""} ${hasChildren ? "has-children" : ""} ${task.parentTaskId ? "has-parent" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
+      style={group ? ({ "--task-group-color": group.color } as CSSProperties) : undefined}
       data-task-drop-id={task.id}
       data-task-target-date={targetDate ?? undefined}
       role="treeitem"
@@ -530,6 +785,7 @@ function TaskRow({
         type="button"
         className="drag-handle"
         disabled={transitioning}
+        aria-disabled={!canReorder}
         aria-label={canReorder ? `拖动排序：${task.title}` : "清除筛选后可排序"}
         title={canReorder ? "拖动排序；方向键微调，Home/End 移到首尾" : "清除筛选后可排序"}
         onPointerDown={(event) => onPointerStart(event, task.id)}
@@ -558,10 +814,39 @@ function TaskRow({
       >
         {task.status === "todo" || visualDone ? "" : "·"}
       </button>
-      <button type="button" className="task-summary" disabled={transitioning} onClick={() => onOpen(task)}>
+      <div className="task-summary">
+        <button
+          type="button"
+          className="task-summary-open"
+          aria-label={`打开任务详情：${task.title}`}
+          disabled={transitioning}
+          onClick={() => onOpen(task)}
+        />
         <span className="task-title-line">
           <strong>{task.title}</strong>
           {task.hardness === "hard" && <span className="hard-mark" title="硬任务">◆</span>}
+          {group && (
+            <button
+              type="button"
+              className="task-group-marker"
+              aria-label={`按分组筛选：${group.name}`}
+              title={`只看「${group.name}」分组`}
+              disabled={transitioning}
+              draggable={false}
+              onPointerDown={(event) => event.stopPropagation()}
+              onDragStart={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectGroup(group.id);
+              }}
+            >
+              <span aria-hidden="true" />
+              <b>{group.name}</b>
+            </button>
+          )}
         </span>
         <span className="task-meta">
           {ancestorPath && <span className="task-parent-context" title={`隶属：${ancestorPath}`}>隶属：{ancestorPath}</span>}
@@ -573,28 +858,53 @@ function TaskRow({
           )}
           {task.deadline && <span className="deadline">截止 {formatShortDate(task.deadline)}</span>}
         </span>
-      </button>
-      {hasChildren && (
-        <button
-          type="button"
-          className="task-children-toggle"
-          disabled={transitioning}
-          aria-label={`${childrenExpanded ? "收起" : "展开"}${task.title}的子任务`}
-          aria-expanded={childrenExpanded}
-          title={childrenExpanded ? "收起子任务" : "展开子任务"}
-          draggable={false}
-          onPointerDown={(event) => event.stopPropagation()}
-          onDragStart={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleChildren(task.id);
-          }}
-        >
-          <span aria-hidden="true">{childrenExpanded ? "▾" : "▸"}</span>
-        </button>
+      </div>
+      {(hasChildren || task.parentTaskId) && (
+        <div className="task-lineage-actions">
+          {hasChildren && (
+            <button
+              type="button"
+              className="task-children-toggle"
+              disabled={transitioning || inheritancePending}
+              aria-label={`${childrenExpanded ? "收起" : "展开"}${task.title}的子任务`}
+              aria-expanded={childrenExpanded}
+              title={childrenExpanded ? "收起子任务" : "展开子任务"}
+              draggable={false}
+              onPointerDown={(event) => event.stopPropagation()}
+              onDragStart={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleChildren(task.id);
+              }}
+            >
+              <span aria-hidden="true">{childrenExpanded ? "▾" : "▸"}</span>
+            </button>
+          )}
+          {task.parentTaskId && (
+            <button
+              type="button"
+              className="task-inherit-parent"
+              disabled={transitioning || inheritancePending}
+              aria-label={`从父任务继承${task.title}的分组、标签与评分`}
+              title={parentTask
+                ? `继承「${parentTask.title}」的分组、标签与评分`
+                : "同步父任务当前的分组、标签与评分"}
+              draggable={false}
+              onPointerDown={(event) => event.stopPropagation()}
+              onDragStart={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => void inheritParent(event)}
+            >
+              <span aria-hidden="true">↥</span>
+              {inheritancePending ? "继承中" : "继承"}
+            </button>
+          )}
+        </div>
       )}
       <select
         aria-label={`${task.title}的温度`}
@@ -689,7 +999,33 @@ function TaskRow({
               预览 {scorePreview ? calculateCompositeScore(scorePreview) : "—"}
             </output>
           </header>
-          <fieldset className="score-dimension-grid" disabled={scoreSaving}>
+          {task.parentTaskId && (
+            <div className="score-inheritance-row">
+              <label className="score-inheritance-toggle">
+                <input
+                  type="checkbox"
+                  checked={inheritsParentScore}
+                  disabled={scoreSaving || !parentTask?.scoreDimensions}
+                  onChange={(event) => {
+                    const inherits = event.currentTarget.checked;
+                    setInheritsParentScore(inherits);
+                    if (inherits && parentTask?.scoreDimensions) {
+                      setScoreDraft(createScoreDimensionDraft(parentTask.scoreDimensions));
+                    }
+                  }}
+                />
+                继承父任务数值
+              </label>
+              <small>
+                {parentTask?.scoreDimensions
+                  ? inheritsParentScore
+                    ? `当前继承「${parentTask.title}」，取消勾选后可自定义`
+                    : `可重新采用「${parentTask.title}」的评分`
+                  : "父任务尚无维度评分，暂不可继承"}
+              </small>
+            </div>
+          )}
+          <fieldset className="score-dimension-grid" disabled={scoreSaving || inheritsParentScore}>
             <legend className="sr-only">三维评分与精力成本元数据，每项范围为 0 到 100</legend>
             {scoreDimensionFields.map(({ key, label, hint }) => (
               <label key={key} htmlFor={`task-${task.id}-score-${key}`}>
@@ -720,7 +1056,9 @@ function TaskRow({
                 ? "正在保存…"
                 : pendingScore
                   ? "未确认保存，输入已保留"
-                  : "精力成本不参与综合分"}
+                  : inheritsParentScore
+                    ? "保存后采用父任务当前的维度分"
+                    : "精力成本不参与综合分"}
             </span>
             <div>
               <button type="button" className="button button-secondary" disabled={scoreSaving} onClick={cancelScoreEdit}>取消</button>
@@ -738,12 +1076,17 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
   const {
     view,
     tasks,
+    allTasks,
+    taskGroups,
     filters,
     tags,
     onViewChange,
     onFiltersChange,
     onAdd,
+    onCreateTaskGroup,
+    onUpdateTaskGroup,
     onUpdate,
+    onInheritParent,
     onOpen,
     onReorder,
     completionMotions = {},
@@ -755,6 +1098,14 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
   } | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(() => new Set());
   const [collapsedQueues, setCollapsedQueues] = useState<Set<TaskQueueGroupKey>>(() => new Set());
+  const initialFilterGroup = filters.group === "all" || filters.group === "ungrouped"
+    ? null
+    : taskGroups.find((group) => group.id === filters.group) ?? null;
+  const [groupNameDraft, setGroupNameDraft] = useState(initialFilterGroup?.name ?? "");
+  const [groupColorDraft, setGroupColorDraft] = useState(initialFilterGroup?.color ?? "");
+  const [groupDraftSaving, setGroupDraftSaving] = useState(false);
+  const [groupDraftError, setGroupDraftError] = useState("");
+  const selectedFilterGroupId = useRef<string | null>(null);
   const pointerDrag = useRef<{
     pointerId: number;
     taskId: string;
@@ -764,6 +1115,53 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     target: { id: string | "end"; position: TaskDropPosition } | null;
   } | null>(null);
   const currentDate = todayKey();
+  const taskGroupsById = useMemo(
+    () => new Map(taskGroups.map((group) => [group.id, group])),
+    [taskGroups],
+  );
+  const selectedFilterGroup = filters.group === "all" || filters.group === "ungrouped"
+    ? null
+    : taskGroupsById.get(filters.group) ?? null;
+  selectedFilterGroupId.current = selectedFilterGroup?.id ?? null;
+  const normalizedGroupDraft = buildTaskGroupUpdatePatch(groupNameDraft, groupColorDraft);
+  const groupDraftDirty = Boolean(selectedFilterGroup && normalizedGroupDraft && (
+    normalizedGroupDraft.name !== selectedFilterGroup.name ||
+    normalizedGroupDraft.color !== selectedFilterGroup.color
+  ));
+  const groupDraftValidationError = selectedFilterGroup && !groupNameDraft.trim()
+    ? "分组名称不能为空"
+    : "";
+
+  useEffect(() => {
+    setGroupNameDraft(selectedFilterGroup?.name ?? "");
+    setGroupColorDraft(selectedFilterGroup?.color ?? "");
+    setGroupDraftError("");
+  }, [selectedFilterGroup]);
+
+  async function saveSelectedGroup(): Promise<void> {
+    if (!selectedFilterGroup) return;
+    const patch = buildTaskGroupUpdatePatch(groupNameDraft, groupColorDraft);
+    if (!patch) {
+      setGroupDraftError(groupNameDraft.trim() ? "请选择有效颜色" : "分组名称不能为空");
+      return;
+    }
+    const groupId = selectedFilterGroup.id;
+    setGroupDraftSaving(true);
+    setGroupDraftError("");
+    try {
+      const updated = await onUpdateTaskGroup(groupId, patch);
+      if (selectedFilterGroupId.current === groupId) {
+        setGroupNameDraft(updated.name);
+        setGroupColorDraft(updated.color);
+      }
+    } catch (reason) {
+      if (selectedFilterGroupId.current === groupId) {
+        setGroupDraftError(reason instanceof Error ? reason.message : "分组更新失败，输入已保留");
+      }
+    } finally {
+      setGroupDraftSaving(false);
+    }
+  }
   const orderedRows = useMemo(
     () => view === "tasks" ? taskRowsByRank(tasks) : taskTreeRows(tasks),
     [tasks, view],
@@ -774,6 +1172,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
         ({ task }) =>
           (filters.temperature === "all" || task.temperature === filters.temperature) &&
           (filters.status === "all" || task.status === filters.status) &&
+          matchesTaskGroupFilter(task, filters.group) &&
           matchesTagKeyword(task.tags, filters.tag) &&
           (view === "today" || matchesTaskTimeFilter(task, filters.time, currentDate)),
       ),
@@ -816,6 +1215,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
   const filterActive =
     filters.temperature !== "all" ||
     filters.status !== "all" ||
+    filters.group !== "all" ||
     Boolean(filters.tag.trim()) ||
     (view === "tasks" && filters.time !== "current");
   const canReorder = !filterActive;
@@ -1011,6 +1411,10 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
       <TaskRow
         key={task.id}
         task={task}
+        parentTask={task.parentTaskId
+          ? allTasks.find((candidate) => candidate.id === task.parentTaskId) ?? null
+          : null}
+        group={task.groupId ? taskGroupsById.get(task.groupId) ?? null : null}
         depth={depth}
         ancestorTitles={ancestorTitles}
         lineageIssue={lineageIssue}
@@ -1021,7 +1425,9 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
         dropPosition={dropTarget?.id === task.id ? dropTarget.position : null}
         completionMotion={completionMotions[task.id] ?? null}
         onUpdate={onUpdate}
+        onInheritParent={onInheritParent}
         onOpen={onOpen}
+        onSelectGroup={(groupId) => onFiltersChange({ ...filters, group: groupId })}
         onToggleChildren={toggleTaskChildren}
         onDragStart={(event, id) => {
           setDraggingId(id);
@@ -1081,7 +1487,12 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
         )}
       </header>
 
-      <QuickAdd view={view} onAdd={onAdd} />
+      <QuickAdd
+        view={view}
+        taskGroups={taskGroups}
+        onAdd={onAdd}
+        onCreateTaskGroup={onCreateTaskGroup}
+      />
 
       <div className="filter-bar">
         <div className="filter-group">
@@ -1094,18 +1505,39 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <option value="tasks">全部任务</option>
             <option value="today">今天</option>
           </select>
-          <select
-            aria-label="按温度筛选"
-            value={filters.temperature}
-            onChange={(event) =>
-              onFiltersChange({ ...filters, temperature: event.target.value as TaskFilters["temperature"] })
-            }
-          >
-            <option value="all">全部温度</option>
-            {Object.entries(temperatureLabels).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
+          {selectedFilterGroup && (
+            <div className="task-group-color-editor">
+              <input
+                type="text"
+                className="task-group-name-input"
+                aria-label={`修改「${selectedFilterGroup.name}」的名称`}
+                aria-invalid={!groupNameDraft.trim()}
+                value={groupNameDraft}
+                onChange={(event) => {
+                  setGroupNameDraft(event.target.value);
+                  setGroupDraftError("");
+                }}
+              />
+              <input
+                type="color"
+                aria-label={`修改「${selectedFilterGroup.name}」的颜色`}
+                value={normalizeTaskGroupColor(groupColorDraft) ?? selectedFilterGroup.color}
+                onChange={(event) => {
+                  setGroupColorDraft(event.target.value.toUpperCase());
+                  setGroupDraftError("");
+                }}
+              />
+              <button
+                type="button"
+                className="text-button"
+                disabled={groupDraftSaving || !groupDraftDirty || Boolean(groupDraftValidationError)}
+                onClick={() => void saveSelectedGroup()}
+              >{groupDraftSaving ? "保存中…" : "保存分组"}</button>
+              {(groupDraftError || groupDraftValidationError) && (
+                <span role="alert">{groupDraftError || groupDraftValidationError}</span>
+              )}
+            </div>
+          )}
           <select
             aria-label="按状态筛选"
             value={filters.status}
@@ -1150,7 +1582,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <button
               className="text-button"
               type="button"
-              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current" })}
+              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current", group: "all" })}
             >
               清除筛选
             </button>
@@ -1249,7 +1681,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <button
               className="button button-secondary"
               type="button"
-              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current" })}
+              onClick={() => onFiltersChange({ temperature: "all", status: "all", tag: "", time: "current", group: "all" })}
             >
               清除筛选
             </button>

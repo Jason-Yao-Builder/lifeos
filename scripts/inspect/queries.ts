@@ -25,8 +25,16 @@ export function inspectState(database: LifeOSDatabase, limit: number) {
       byStatus: grouped(sqlite, 'SELECT status key, COUNT(*) value FROM tasks WHERE workspace_id = ? GROUP BY status', workspaceId),
       byTemperature: grouped(sqlite, 'SELECT temperature key, COUNT(*) value FROM tasks WHERE workspace_id = ? GROUP BY temperature', workspaceId),
       recent: sqlite.prepare(
-        `SELECT id, title, status, temperature, version, updated_at updatedAt, deleted_at deletedAt
+        `SELECT id, title, status, temperature, group_id groupId, version,
+          updated_at updatedAt, deleted_at deletedAt
          FROM tasks WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?`,
+      ).all(workspaceId, limit) as Array<Record<string, unknown>>,
+    },
+    taskGroups: {
+      total: count(sqlite, 'SELECT COUNT(*) value FROM task_groups WHERE workspace_id = ?', workspaceId),
+      recent: sqlite.prepare(
+        `SELECT id, name, color, updated_at updatedAt
+         FROM task_groups WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?`,
       ).all(workspaceId, limit) as Array<Record<string, unknown>>,
     },
     cards: {
@@ -106,6 +114,7 @@ function summarize(row: TimelineEventRow): string {
     'startAt',
     'endAt',
     'goalId',
+    'groupId',
     'parentTaskId',
     'carryOverFrom',
     'rank',
@@ -125,6 +134,7 @@ export function inspectTaskTimeline(database: LifeOSDatabase, taskId: string) {
   const task = sqlite.prepare(
     `SELECT id, title, status, temperature, version, planned_date plannedDate,
       deadline_at deadline, starts_at startAt, ends_at endAt, goal_id goalId,
+      group_id groupId,
       parent_task_id parentTaskId, repeat_template_id repeatTemplateId,
       carry_over_from carryOverFrom, completed_at completedAt, deleted_at deletedAt
      FROM tasks WHERE workspace_id = ? AND id = ?`,

@@ -48,6 +48,7 @@ const task = (id: string, patch: Partial<Task> = {}): Task => ({
   hardness: "soft",
   deadline: null,
   plannedDate: null,
+  groupId: null,
   tags: [],
   score: null,
   rank: 0,

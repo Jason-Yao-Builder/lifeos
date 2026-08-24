@@ -28,6 +28,7 @@ function task(id: string, title: string, patch: Partial<Task> = {}): Task {
     hardness: "soft",
     deadline: null,
     plannedDate: null,
+    groupId: null,
     tags: [],
     score: null,
     rank: 0,
@@ -145,6 +146,21 @@ describe("TaskStructure", () => {
       api: {} as LifeOSApi,
       allTasks: [parent, child],
       goals: [],
+      taskGroups: [{
+        id: "group-project",
+        workspaceId: "workspace",
+        name: "产品迭代",
+        color: "#2F6B52",
+        createdAt: "2026-08-24T00:00:00Z",
+        updatedAt: "2026-08-24T00:00:00Z",
+      }],
+      onCreateTaskGroup: async (input) => ({
+        id: "group-created",
+        workspaceId: "workspace",
+        ...input,
+        createdAt: "2026-08-24T00:00:00Z",
+        updatedAt: "2026-08-24T00:00:00Z",
+      }),
       onClose: () => undefined,
       onSave: async () => undefined,
       onOpenTask: () => undefined,
@@ -152,6 +168,8 @@ describe("TaskStructure", () => {
     }));
 
     expect(html).toContain("返回父任务：季度发布计划");
+    expect(html).toContain('aria-label="任务分组"');
+    expect(html).toContain("产品迭代");
     expect(html.indexOf("返回父任务：季度发布计划")).toBeLessThan(html.indexOf("详情"));
   });
 });

@@ -10,6 +10,7 @@ import type {
   reviewCards,
   rules,
   taskDependencies,
+  taskGroups,
   tasks,
 } from '../schema.js';
 import { decodeJson, decodeStringArray } from '../json.js';
@@ -24,6 +25,7 @@ import type {
   ReviewCardRecord,
   RuleRecord,
   TaskDependencyRecord,
+  TaskGroupRecord,
   TaskRecord,
 } from '../types.js';
 
@@ -41,6 +43,7 @@ export const mapTask = (row: typeof tasks.$inferSelect): TaskRecord => ({
   endAt: row.endsAt,
   estimatedMinutes: row.estimatedMinutes,
   actualMinutes: row.actualMinutes,
+  groupId: row.groupId,
   parentTaskId: row.parentTaskId,
   goalId: row.goalId,
   repeatTemplateId: row.repeatTemplateId,
@@ -56,6 +59,15 @@ export const mapTask = (row: typeof tasks.$inferSelect): TaskRecord => ({
   updatedAt: row.updatedAt,
   completedAt: row.completedAt,
   deletedAt: row.deletedAt,
+});
+
+export const mapTaskGroup = (row: typeof taskGroups.$inferSelect): TaskGroupRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  name: row.name,
+  color: row.color,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
 });
 
 export const mapGoal = (row: typeof goals.$inferSelect): GoalRecord => ({

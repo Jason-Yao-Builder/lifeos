@@ -52,6 +52,7 @@ const WritableTaskFieldsSchema = z
     startAt: DateTimeSchema.nullable(),
     endAt: DateTimeSchema.nullable(),
     estimatedMinutes: z.number().int().positive().max(525_600).nullable(),
+    groupId: EntityIdSchema.nullable(),
     goalId: EntityIdSchema.nullable(),
     repeatTemplateId: EntityIdSchema.nullable(),
     parentTaskId: EntityIdSchema.nullable(),
@@ -71,6 +72,7 @@ export const CreateTaskInputSchema = WritableTaskFieldsSchema.extend({
   startAt: WritableTaskFieldsSchema.shape.startAt.default(null),
   endAt: WritableTaskFieldsSchema.shape.endAt.default(null),
   estimatedMinutes: WritableTaskFieldsSchema.shape.estimatedMinutes.default(null),
+  groupId: WritableTaskFieldsSchema.shape.groupId.default(null),
   goalId: WritableTaskFieldsSchema.shape.goalId.default(null),
   repeatTemplateId: WritableTaskFieldsSchema.shape.repeatTemplateId.default(null),
   parentTaskId: WritableTaskFieldsSchema.shape.parentTaskId.default(null),
@@ -86,6 +88,8 @@ export const CreateSubtaskInputSchema = CreateTaskInputSchema.omit({
   status: true,
   tags: true,
   parentTaskId: true,
+  groupId: true,
+  scoreDimensions: true,
 }).strict();
 export type CreateSubtaskRequest = z.input<typeof CreateSubtaskInputSchema>;
 export type CreateSubtaskInput = z.output<typeof CreateSubtaskInputSchema>;

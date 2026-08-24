@@ -18,6 +18,7 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
     plannedDate: null,
     startAt: null,
     endAt: null,
+    groupId: null,
     goalId: null,
     repeatTemplateId: null,
     parentTaskId: null,

@@ -15,6 +15,7 @@ import {
 import { createReviewOperations, type ReviewOperations } from './reviews.js';
 import { createRuleOperations, type RuleOperations } from './rules.js';
 import { createTaskOperations, type TaskOperations } from './tasks.js';
+import { createTaskGroupOperations, type TaskGroupOperations } from './task-groups.js';
 import {
   createTaskImageOperations,
   type TaskImageOperations,
@@ -23,6 +24,7 @@ import type { SqliteDatabase, StoreExecutor } from './runtime.js';
 
 export interface LifeOSStore {
   tasks: TaskOperations;
+  taskGroups: TaskGroupOperations;
   taskImages: TaskImageOperations;
   goals: GoalOperations;
   dependencies: DependencyOperations;
@@ -46,6 +48,7 @@ export function createStore(
   const runtime = { root, executor, inTransaction, now };
   const store: LifeOSStore = {
     tasks: createTaskOperations(runtime),
+    taskGroups: createTaskGroupOperations(runtime),
     taskImages: createTaskImageOperations(runtime),
     goals: createGoalOperations(runtime),
     dependencies: createDependencyOperations(runtime),
@@ -77,6 +80,7 @@ export type {
   ReviewOperations,
   RuleOperations,
   TaskOperations,
+  TaskGroupOperations,
   TaskImageOperations,
 };
 export type { SqliteDatabase, SqliteTransaction, StoreExecutor } from './runtime.js';

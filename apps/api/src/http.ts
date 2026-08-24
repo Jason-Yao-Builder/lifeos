@@ -38,10 +38,16 @@ export function taskWasManuallyScored(
     if (event.actorType !== 'human') return false;
     const after = scoreDimensionsFrom(event.after);
     if (!after) return false;
-    if (event.type === 'task.created') return true;
+    if (event.type === 'task.created') return parentTaskIdFrom(event.after) === null;
     if (event.type !== 'task.updated') return false;
     return !sameScoreDimensions(scoreDimensionsFrom(event.before), after);
   });
+}
+
+function parentTaskIdFrom(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const parentTaskId = (value as Record<string, unknown>).parentTaskId;
+  return typeof parentTaskId === 'string' ? parentTaskId : null;
 }
 
 function scoreDimensionsFrom(value: unknown): TaskScoreDimensions | null {
@@ -134,6 +140,9 @@ function classifyError(error: unknown): {
   }
   if (candidate.code === 'VERSION_CONFLICT') {
     return { status: 409, code: 'CONFLICT', message: candidate.message ?? 'Version conflict' };
+  }
+  if (candidate.code === 'CONFLICT') {
+    return { status: 409, code: 'CONFLICT', message: candidate.message ?? 'Resource conflict' };
   }
   if (candidate.code === 'DEPENDENCY_CYCLE') {
     return { status: 409, code: 'CONFLICT', message: candidate.message ?? 'Circular dependency' };

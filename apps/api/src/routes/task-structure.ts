@@ -4,7 +4,6 @@ import {
   EntityIdSchema,
   LocalDateSchema,
 } from '@lifeos/contracts';
-import { calculateTaskScore } from '@lifeos/domain';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { actorFor, docs, parseWith, projectTask, ResourceNotFoundError } from '../http.js';
@@ -20,6 +19,7 @@ const DependencyParamsSchema = z
 const CriticalPathQuerySchema = z
   .object({ from: LocalDateSchema.optional(), to: LocalDateSchema.optional(), goalId: EntityIdSchema.optional() })
   .strict();
+const InheritParentBodySchema = z.object({ version: z.number().int().positive() }).strict();
 
 export function taskStructureRoutes(
   dependencies: Required<Pick<AppDependencies, 'store' | 'tenantId' | 'userId'>>,
@@ -116,22 +116,38 @@ export function taskStructureRoutes(
     app.post('/tasks/:id/subtasks', { schema: docs('Create a subtask', ['tasks']) }, async (request, reply) => {
       const { id } = parseWith(IdParamsSchema, request.params);
       const parent = ensureTask(dependencies, id);
-      const input = parseWith(CreateSubtaskInputSchema, request.body);
-      const score = input.scoreDimensions ? calculateTaskScore(input.scoreDimensions).score : null;
+      const input = parseWith(CreateSubtaskInputSchema, withoutClientGroupId(request.body));
       const task = dependencies.store.tasks.create(
         {
           ...input,
           tenantId: dependencies.tenantId,
           ownerId: dependencies.userId,
           parentTaskId: id,
+          groupId: parent.groupId,
           goalId: input.goalId ?? parent.goalId,
           tags: [...parent.tags],
           status: parent.status,
-          score,
+          scoreDimensions: parent.scoreDimensions,
+          score: parent.score,
         },
         actorFor(request),
       );
       return reply.status(201).send(projectTask(task, false));
+    });
+
+    app.post('/tasks/:id/inherit-parent', { schema: docs('Inherit parent task attributes', ['tasks']) }, async (request) => {
+      const { id } = parseWith(IdParamsSchema, request.params);
+      const { version } = parseWith(InheritParentBodySchema, request.body);
+      const task = dependencies.store.tasks.inheritParentAttributes(
+        dependencies.tenantId,
+        id,
+        version,
+        actorFor(request),
+      );
+      return projectTask(
+        task,
+        dependencies.store.dependencies.isBlocked(dependencies.tenantId, task.id),
+      );
     });
 
     app.get('/tasks/:id/progress', { schema: docs('Get subtask progress', ['tasks']) }, async (request) => {
@@ -141,6 +157,13 @@ export function taskStructureRoutes(
     });
   };
   return plugin;
+}
+
+function withoutClientGroupId(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const input = { ...(value as Record<string, unknown>) };
+  delete input.groupId;
+  return input;
 }
 
 function ensureTask(

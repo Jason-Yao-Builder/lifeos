@@ -28,7 +28,7 @@ import {
 } from '../http.js';
 
 export function taskRoutes(
-  dependencies: Required<Pick<AppDependencies, 'store' | 'ai' | 'tenantId'>>,
+  dependencies: Required<Pick<AppDependencies, 'store' | 'ai' | 'tenantId' | 'userId'>>,
 ) {
   const plugin: FastifyPluginAsync = async (app) => {
     app.get('/tasks', { schema: docs('List tasks', ['tasks']) }, async (request) => {
@@ -51,7 +51,12 @@ export function taskRoutes(
       const input = assertValidTaskInput(normalizeTaskDeadline(request.body));
       const manualScore = input.scoreDimensions ? calculateTaskScore(input.scoreDimensions).score : null;
       const created = await dependencies.store.tasks.create(
-        { ...input, score: manualScore },
+        {
+          ...input,
+          tenantId: dependencies.tenantId,
+          ownerId: dependencies.userId,
+          score: manualScore,
+        },
         actorFor(request),
       );
       const task = input.scoreDimensions

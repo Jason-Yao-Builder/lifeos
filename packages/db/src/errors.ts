@@ -16,6 +16,15 @@ export class VersionConflictError extends Error {
   }
 }
 
+export class ConflictError extends Error {
+  readonly code = 'CONFLICT';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
 export class InvalidMutationError extends Error {
   readonly code = 'INVALID_MUTATION';
 

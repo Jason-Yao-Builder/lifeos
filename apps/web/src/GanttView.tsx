@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CSSProperties,
   DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactElement,
 } from "react";
 import type { LifeOSApi } from "./api";
-import type { GanttData, GanttTask, Goal, Task } from "./types";
+import { TaskViewTabs, useTaskViewSwipe } from "./TaskViewNavigation";
+import type { TaskViewKind } from "./TaskViewNavigation";
+import type { GanttData, GanttTask, Goal, Task, TaskGroup, Temperature } from "./types";
 import {
   addDays,
   addMonths,
@@ -79,12 +82,149 @@ export function ganttDragPreview(
 interface GanttViewProps {
   api: LifeOSApi;
   goals: Goal[];
+  taskRevision: string;
   onOpen: (task: Task) => void;
   onTaskSaved: (task: Task) => void;
   onToast: (message: string) => void;
+  onViewChange?: (view: TaskViewKind) => void;
 }
 
 const pixels: Record<Scale, number> = { day: 34, week: 18, month: 8 };
+
+type GanttColorStyle = CSSProperties & {
+  "--task-group-color"?: string;
+  "--task-group-fill"?: string;
+  "--task-group-gradient"?: string;
+  "--task-group-progress"?: string;
+  "--gantt-preview-fill"?: string;
+  "--gantt-preview-border"?: string;
+};
+
+const temperatureFills: Record<Temperature, string> = {
+  hot: "#f3cfc9",
+  warm: "#f2dfb4",
+  cold: "#d7e6ed",
+  inspiration: "#e5dcef",
+};
+
+const temperatureBorders: Record<Temperature, string> = {
+  hot: "#c87869",
+  warm: "#af873d",
+  cold: "#7197a8",
+  inspiration: "#9276a9",
+};
+
+function lightGroupFill(color: string): string {
+  const channels = [
+    Number.parseInt(color.slice(1, 3), 16),
+    Number.parseInt(color.slice(3, 5), 16),
+    Number.parseInt(color.slice(5, 7), 16),
+  ];
+  return `#${channels.map((channel) =>
+    Math.round(channel + (255 - channel) * 0.76).toString(16).padStart(2, "0"),
+  ).join("")}`;
+}
+
+function clampedProgress(progress: number): number {
+  return Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0));
+}
+
+export function ganttGroupGradient(color: string, progress: number): string {
+  const fill = lightGroupFill(color);
+  const stop = clampedProgress(progress);
+  return `linear-gradient(90deg, ${color} 0%, ${color} ${stop}%, ${fill} ${stop}%, ${fill} 100%)`;
+}
+
+export function ganttColorName(color: string): string {
+  const red = Number.parseInt(color.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(color.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(color.slice(5, 7), 16) / 255;
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const lightness = (maximum + minimum) / 2;
+  const delta = maximum - minimum;
+  if (lightness > 0.93) return "白色";
+  if (lightness < 0.12) return "黑色";
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  if (saturation < 0.15) return "灰色";
+  const hue = maximum === red
+    ? 60 * (((green - blue) / delta) % 6)
+    : maximum === green
+      ? 60 * ((blue - red) / delta + 2)
+      : 60 * ((red - green) / delta + 4);
+  const normalizedHue = hue < 0 ? hue + 360 : hue;
+  if (normalizedHue < 15 || normalizedHue >= 345) return "红色";
+  if (normalizedHue < 45) return "橙色";
+  if (normalizedHue < 70) return "黄色";
+  if (normalizedHue < 165) return "绿色";
+  if (normalizedHue < 195) return "青色";
+  if (normalizedHue < 255) return "蓝色";
+  if (normalizedHue < 290) return "紫色";
+  return "粉色";
+}
+
+export function ganttGroupAccessibleLabel(group: Pick<TaskGroup, "name" | "color">): string {
+  return `${group.name}，${ganttColorName(group.color)}（${group.color.toUpperCase()}）`;
+}
+
+export function ganttTaskAppearance(
+  task: Pick<GanttTask, "groupId" | "temperature" | "progress" | "isBlocked">,
+  groups: readonly TaskGroup[],
+  options: { preview?: boolean; critical?: boolean } = {},
+): { className: string; style: GanttColorStyle; group: TaskGroup | null } {
+  const group = task.groupId ? groups.find((candidate) => candidate.id === task.groupId) ?? null : null;
+  const className = [
+    options.preview ? "gantt-drag-preview" : "gantt-bar",
+    group ? "" : `temperature-${task.temperature}`,
+    group ? "gantt-group-colored" : "",
+    options.critical ? "is-critical" : "",
+    task.isBlocked ? "is-blocked" : "",
+  ].filter(Boolean).join(" ");
+  const groupProgress = clampedProgress(task.progress);
+  const groupGradient = group ? ganttGroupGradient(group.color, groupProgress) : "";
+  const style: GanttColorStyle = group
+    ? {
+        "--task-group-color": group.color,
+        "--task-group-fill": lightGroupFill(group.color),
+        "--task-group-gradient": groupGradient,
+        "--task-group-progress": `${groupProgress}%`,
+        background: groupGradient,
+      }
+    : options.preview
+      ? {
+          "--gantt-preview-fill": temperatureFills[task.temperature],
+          "--gantt-preview-border": temperatureBorders[task.temperature],
+        }
+      : {};
+  return { className, style, group };
+}
+
+export function ganttPreviewAppearance(
+  task: Pick<GanttTask, "id" | "groupId" | "temperature" | "progress" | "isBlocked">,
+  groups: readonly TaskGroup[],
+  criticalTaskIds: ReadonlySet<string>,
+): ReturnType<typeof ganttTaskAppearance> {
+  return ganttTaskAppearance(task, groups, {
+    preview: true,
+    critical: criticalTaskIds.has(task.id),
+  });
+}
+
+export async function loadGanttSnapshot(
+  api: Pick<LifeOSApi, "getGantt" | "getTaskGroups">,
+  start: string,
+  end: string,
+  goalId: string | undefined,
+  previousTasks: GanttTask[] = [],
+): Promise<{ data: GanttData; groups: TaskGroup[] }> {
+  const ganttRequest = api.getGantt(start, end, goalId);
+  const groupsRequest = api.getTaskGroups().catch(() => [] as TaskGroup[]);
+  const [loaded, groups] = await Promise.all([ganttRequest, groupsRequest]);
+  return {
+    data: { ...loaded, tasks: stableGanttTaskOrder(loaded.tasks, previousTasks) },
+    groups,
+  };
+}
 
 export function stableGanttTaskOrder(next: GanttTask[], previous: GanttTask[] = []): GanttTask[] {
   const previousPosition = new Map(previous.map((task, index) => [task.id, index]));
@@ -104,12 +244,14 @@ export function stableGanttTaskOrder(next: GanttTask[], previous: GanttTask[] = 
     .map(({ task }) => task);
 }
 
-export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttViewProps): ReactElement {
+export function GanttView({ api, goals, taskRevision, onOpen, onTaskSaved, onToast, onViewChange }: GanttViewProps): ReactElement {
   const today = localDate(new Date());
   const [start, setStart] = useState(addDays(today, -7));
   const [scale, setScale] = useState<Scale>("day");
   const [goalId, setGoalId] = useState("");
   const [data, setData] = useState<GanttData>({ tasks: [], dependencies: [], criticalPath: [] });
+  const [groups, setGroups] = useState<TaskGroup[]>([]);
+  const taskOrderRef = useRef<GanttTask[]>([]);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -122,6 +264,11 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
   const previousWindowLabel = scale === "month" ? "向前移动一个月" : "向前移动一周";
   const nextWindowLabel = scale === "month" ? "向后移动一个月" : "向后移动一周";
   const todayWindowLabel = "把时间窗口定位到今天附近";
+  const swipeHandlers = useTaskViewSwipe("gantt", onViewChange);
+  const usedGroups = useMemo(() => {
+    const groupIds = new Set(data.tasks.map((task) => task.groupId).filter(Boolean));
+    return groups.filter((group) => groupIds.has(group.id));
+  }, [data.tasks, groups]);
 
   function toggleTask(taskId: string): void {
     setCollapsedTaskIds((current) => {
@@ -136,11 +283,10 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
     setLoading(true);
     setError("");
     try {
-      const loaded = await api.getGantt(rangeStart, end, goalId || undefined);
-      setData((current) => ({
-        ...loaded,
-        tasks: stableGanttTaskOrder(loaded.tasks, current.tasks),
-      }));
+      const loaded = await loadGanttSnapshot(api, rangeStart, end, goalId || undefined, taskOrderRef.current);
+      taskOrderRef.current = loaded.data.tasks;
+      setData(loaded.data);
+      setGroups(loaded.groups);
     } catch {
       setError("甘特数据暂时无法读取。");
     } finally {
@@ -150,7 +296,7 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, taskRevision]);
 
   async function moveTask(taskId: string, operation: DragOperation, origin: string, targetDate: string): Promise<void> {
     const task = data.tasks.find((item) => item.id === taskId);
@@ -175,9 +321,22 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
   }
 
   return (
-    <section className="board v02-page gantt-page" aria-labelledby="gantt-title">
+    <section
+      className="board v02-page gantt-page task-view-page"
+      aria-labelledby="task-views-title"
+      {...swipeHandlers}
+    >
       <header className="v02-page-header">
-        <div><p className="eyebrow">先后关系与路径</p><h1 id="gantt-title">甘特图</h1></div>
+        <div><p className="eyebrow">任务的时间视图</p><h1 id="task-views-title">视图</h1></div>
+        <TaskViewTabs current="gantt" onChange={onViewChange} />
+      </header>
+      <div
+        className="task-view-panel task-view-enter-from-right"
+        role="tabpanel"
+        id="task-view-panel-gantt"
+        aria-labelledby="task-view-tab-gantt"
+      >
+        <div className="task-view-options gantt-view-options">
         <div className="gantt-filters">
           <select value={goalId} onChange={(event) => setGoalId(event.target.value)} aria-label="按目标筛选">
             <option value="">全部目标</option>
@@ -191,8 +350,8 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
             ))}
           </div>
         </div>
-      </header>
-      <div className="gantt-toolbar">
+        </div>
+        <div className="gantt-toolbar">
         <button
           className="button button-secondary"
           aria-label={previousWindowLabel}
@@ -212,13 +371,14 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
           title={nextWindowLabel}
           onClick={() => setStart(scale === "month" ? addMonths(start, 1) : addDays(start, 7))}
         >→</button>
-      </div>
-      {error && <div className="inline-error"><span>{error}</span><button onClick={() => void load()}>重试</button></div>}
-      {loading ? <div className="v02-loading">正在计算关键路径…</div> : data.tasks.length === 0 ? (
+        </div>
+        {error && <div className="inline-error"><span>{error}</span><button onClick={() => void load()}>重试</button></div>}
+        {loading ? <div className="v02-loading">正在计算关键路径…</div> : data.tasks.length === 0 ? (
         <div className="v02-empty"><span>◌</span><h3>这段时间没有可排程的任务</h3><p>为任务设置计划日或起止日期后会出现在这里。</p></div>
       ) : (
         <GanttChart
           data={data}
+          groups={groups}
           days={days}
           cellWidth={cellWidth}
           scale={scale}
@@ -228,14 +388,41 @@ export function GanttView({ api, goals, onOpen, onTaskSaved, onToast }: GanttVie
           onOpen={onOpen}
           onMove={moveTask}
         />
-      )}
-      <footer className="gantt-legend"><span><i className="critical" />关键路径</span><span><i className="blocked" />被阻塞</span><span>拖动中间平移，拖动两端调整起止</span></footer>
+        )}
+        <footer className="gantt-legend">
+        {usedGroups.length > 0 && <strong className="gantt-group-legend-title">分组颜色</strong>}
+        {usedGroups.map((group) => (
+          <span
+            className="gantt-group-legend-item"
+            key={group.id}
+            role="img"
+            aria-label={ganttGroupAccessibleLabel(group)}
+            title={ganttGroupAccessibleLabel(group)}
+          >
+            <i
+              className="gantt-group-swatch"
+              style={{
+                "--task-group-color": group.color,
+                "--task-group-fill": lightGroupFill(group.color),
+              } as GanttColorStyle}
+              aria-hidden="true"
+            />
+            {group.name}
+          </span>
+        ))}
+        {usedGroups.length > 0 && <span>深色为已完成进度，浅色为剩余时段</span>}
+        <span><i className="critical" />关键路径</span>
+        <span><i className="blocked" />被阻塞</span>
+        <span>未分组沿用温度色；拖动中间平移，拖动两端调整起止</span>
+        </footer>
+      </div>
     </section>
   );
 }
 
 interface GanttChartProps {
   data: GanttData;
+  groups: TaskGroup[];
   days: string[];
   cellWidth: number;
   scale: Scale;
@@ -248,6 +435,7 @@ interface GanttChartProps {
 
 function GanttChart({
   data,
+  groups,
   days,
   cellWidth,
   scale,
@@ -434,20 +622,26 @@ function GanttChart({
                 return <path key={dependency.id} d={`M${x1},${y1} C${x1 + 18},${y1} ${x2 - 18},${y2} ${x2},${y2}`} markerEnd="url(#gantt-arrow)" />;
               })}
             </svg>
-            {preview && (
-              <div
-                className="gantt-drag-preview"
-                style={{
-                  left: dayDifference(start, preview.startDate) * cellWidth,
-                  top: preview.rowIndex * rowHeight + 11,
-                  width: Math.max(cellWidth, preview.dayCount * cellWidth),
-                  height: 34,
-                }}
-                aria-hidden="true"
-              >
-                <span>{preview.label}</span>
-              </div>
-            )}
+            {preview && (() => {
+              const previewTask = byId.get(preview.taskId)?.task;
+              if (!previewTask) return null;
+              const appearance = ganttPreviewAppearance(previewTask, groups, critical);
+              return (
+                <div
+                  className={appearance.className}
+                  style={{
+                    ...appearance.style,
+                    left: dayDifference(start, preview.startDate) * cellWidth,
+                    top: preview.rowIndex * rowHeight + 11,
+                    width: Math.max(cellWidth, preview.dayCount * cellWidth),
+                    height: 34,
+                  }}
+                  aria-hidden="true"
+                >
+                  <span>{preview.label}</span>
+                </div>
+              );
+            })()}
             <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
               {preview ? `预计时间 ${preview.label}` : ""}
             </span>
@@ -460,6 +654,7 @@ function GanttChart({
                 cellWidth={cellWidth}
                 rowHeight={rowHeight}
                 critical={critical.has(task.id)}
+                groups={groups}
                 onOpen={onOpen}
                 onCommit={onMove}
                 onHtmlDragStart={(event, operation, origin) => {
@@ -501,6 +696,7 @@ function GanttBar({
   cellWidth,
   rowHeight,
   critical,
+  groups,
   onOpen,
   onCommit,
   onHtmlDragStart,
@@ -514,6 +710,7 @@ function GanttBar({
   cellWidth: number;
   rowHeight: number;
   critical: boolean;
+  groups: TaskGroup[];
   onOpen: (task: Task) => void;
   onCommit: (taskId: string, operation: DragOperation, origin: string, targetDate: string) => Promise<void>;
   onHtmlDragStart: (event: DragEvent, operation: DragOperation, origin: string) => void;
@@ -544,6 +741,10 @@ function GanttBar({
   } | null>(null);
   const [touchDragging, setTouchDragging] = useState(false);
   const ignoreClickUntil = useRef(0);
+  const appearance = ganttTaskAppearance(task, groups, { critical });
+  const groupHint = appearance.group
+    ? `｜分组 ${ganttGroupAccessibleLabel(appearance.group)}`
+    : "";
 
   function startPointer(
     event: ReactPointerEvent<HTMLElement>,
@@ -598,11 +799,11 @@ function GanttBar({
   }
   return (
     <div
-      className={`gantt-bar temperature-${task.temperature} ${critical ? "is-critical" : ""} ${task.isBlocked ? "is-blocked" : ""} ${touchDragging ? "is-touch-dragging" : ""}`}
-      style={{ left, top: index * rowHeight + 11, width: Math.max(cellWidth, duration * cellWidth), height: 34 }}
-      title={task.isBlocked ? `${task.title}：前置任务未完成` : `${task.title}｜${taskStart} — ${taskEnd}`}
+      className={`${appearance.className} ${touchDragging ? "is-touch-dragging" : ""}`}
+      style={{ ...appearance.style, left, top: index * rowHeight + 11, width: Math.max(cellWidth, duration * cellWidth), height: 34 }}
+      title={task.isBlocked ? `${task.title}：前置任务未完成${groupHint}` : `${task.title}｜${taskStart} — ${taskEnd}${groupHint}`}
       role="group"
-      aria-label={`${task.title}，${taskStart} 到 ${taskEnd}${task.isBlocked ? "，已阻塞不可调整" : "，可拖动平移；按回车打开详情"}`}
+      aria-label={`${task.title}，${taskStart} 到 ${taskEnd}${appearance.group ? `，分组 ${ganttGroupAccessibleLabel(appearance.group)}` : ""}${task.isBlocked ? "，已阻塞不可调整" : "，可拖动平移；按回车打开详情"}`}
       aria-disabled={task.isBlocked}
       tabIndex={0}
       draggable={!task.isBlocked}
@@ -640,7 +841,7 @@ function GanttBar({
         }}
         onKeyDown={(event) => keyboardNudge(event, "start", taskStart)}
       />
-      <i style={{ width: `${Math.max(0, Math.min(100, task.progress))}%` }} />
+      {!appearance.group && <i style={{ width: `${clampedProgress(task.progress)}%` }} />}
       <button
         type="button"
         className="gantt-handle end"

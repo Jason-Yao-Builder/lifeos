@@ -120,6 +120,29 @@ export const repeatTemplates = sqliteTable(
   ],
 );
 
+export const taskGroups = sqliteTable(
+  'task_groups',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    normalizedName: text('normalized_name').notNull(),
+    color: text('color').notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('task_groups_workspace_name_idx').on(table.workspaceId, table.normalizedName),
+    index('task_groups_workspace_created_idx').on(table.workspaceId, table.createdAt),
+    check(
+      'task_groups_color_check',
+      sql`length(${table.color}) = 7 and ${table.color} glob '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'`,
+    ),
+  ],
+);
+
 export const tasks = sqliteTable(
   'tasks',
   {
@@ -140,6 +163,7 @@ export const tasks = sqliteTable(
     endsAt: text('ends_at'),
     estimatedMinutes: integer('estimated_minutes'),
     actualMinutes: integer('actual_minutes').notNull().default(0),
+    groupId: text('group_id').references(() => taskGroups.id, { onDelete: 'set null' }),
     parentTaskId: text('parent_task_id').references((): AnySQLiteColumn => tasks.id, {
       onDelete: 'set null',
     }),
@@ -165,6 +189,7 @@ export const tasks = sqliteTable(
     index('tasks_workspace_temperature_idx').on(table.workspaceId, table.temperature),
     index('tasks_workspace_status_idx').on(table.workspaceId, table.status),
     index('tasks_deadline_idx').on(table.deadlineAt),
+    index('tasks_group_idx').on(table.groupId).where(sql`${table.groupId} is not null`),
     index('tasks_goal_idx').on(table.goalId).where(sql`${table.goalId} is not null`),
     index('tasks_planned_date_idx').on(table.plannedDate).where(sql`${table.plannedDate} is not null`),
     index('tasks_parent_idx').on(table.parentTaskId).where(sql`${table.parentTaskId} is not null`),
@@ -381,6 +406,7 @@ export const schema = {
   users,
   goals,
   repeatTemplates,
+  taskGroups,
   tasks,
   taskImages,
   taskDependencies,

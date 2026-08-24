@@ -6,6 +6,7 @@ type Sqlite = LifeOSDatabase['sqlite'];
 
 export interface StateCounts {
   tasks: number;
+  taskGroups: number;
   events: number;
   aiRuns: number;
   cards: number;
@@ -73,6 +74,7 @@ export function workspaceCounts(sqlite: Sqlite): StateCounts {
   const imageStats = taskImageStorageStats(sqlite, workspaceId);
   return {
     tasks: count(sqlite, 'SELECT COUNT(*) value FROM tasks WHERE workspace_id = ?', workspaceId),
+    taskGroups: count(sqlite, 'SELECT COUNT(*) value FROM task_groups WHERE workspace_id = ?', workspaceId),
     events: count(sqlite, 'SELECT COUNT(*) value FROM events WHERE workspace_id = ?', workspaceId),
     aiRuns: count(sqlite, 'SELECT COUNT(*) value FROM ai_runs WHERE workspace_id = ?', workspaceId),
     cards: count(sqlite, 'SELECT COUNT(*) value FROM cards WHERE workspace_id = ?', workspaceId),
@@ -101,6 +103,7 @@ export function resetAll(database: LifeOSDatabase): StateCounts {
     sqlite.prepare('DELETE FROM review_cards WHERE workspace_id = ?').run(workspaceId);
     sqlite.prepare('DELETE FROM events WHERE workspace_id = ?').run(workspaceId);
     sqlite.prepare('DELETE FROM tasks WHERE workspace_id = ?').run(workspaceId);
+    sqlite.prepare('DELETE FROM task_groups WHERE workspace_id = ?').run(workspaceId);
     sqlite.prepare('DELETE FROM repeat_templates WHERE workspace_id = ?').run(workspaceId);
     sqlite.prepare('DELETE FROM goals WHERE workspace_id = ?').run(workspaceId);
     sqlite.prepare('DELETE FROM rules WHERE workspace_id = ?').run(workspaceId);

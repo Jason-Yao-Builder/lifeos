@@ -51,6 +51,7 @@ export interface TaskRecord {
   endAt: string | null;
   estimatedMinutes: number | null;
   actualMinutes: number;
+  groupId: string | null;
   parentTaskId: string | null;
   goalId: string | null;
   repeatTemplateId: string | null;
@@ -96,6 +97,7 @@ export interface CreateTaskInput {
   endAt?: string | null;
   estimatedMinutes?: number | null;
   actualMinutes?: number | null;
+  groupId?: string | null;
   parentTaskId?: string | null;
   goalId?: string | null;
   repeatTemplateId?: string | null;
@@ -121,6 +123,7 @@ export type UpdateTaskPatch = Partial<
     | 'endAt'
     | 'estimatedMinutes'
     | 'actualMinutes'
+    | 'groupId'
     | 'parentTaskId'
     | 'goalId'
     | 'repeatTemplateId'
@@ -133,6 +136,24 @@ export type UpdateTaskPatch = Partial<
     | 'rank'
   >
 >;
+
+export interface TaskGroupRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskGroupInput {
+  id?: string;
+  workspaceId?: string;
+  name: string;
+  color: string;
+}
+
+export type UpdateTaskGroupPatch = Partial<Pick<TaskGroupRecord, 'name' | 'color'>>;
 
 export interface TaskListFilters {
   tenantId?: string;

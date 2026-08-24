@@ -9,6 +9,7 @@ import type {
 } from "react";
 import type { LifeOSApi } from "./api";
 import { CoachIcon } from "./Icons";
+import { TaskGroupCreator } from "./TaskBoard";
 import type {
   AiCard,
   Goal,
@@ -17,6 +18,7 @@ import type {
   Task,
   TaskDependency,
   TaskEvent,
+  TaskGroup,
   TaskImage,
   TaskProgress,
   TaskStatus,
@@ -88,6 +90,8 @@ interface TaskDrawerProps {
   onOpenTask: (taskId: string) => void;
   allTasks: Task[];
   goals: Goal[];
+  taskGroups: TaskGroup[];
+  onCreateTaskGroup: (input: Pick<TaskGroup, "name" | "color">) => Promise<TaskGroup>;
   onStructureChanged: () => Promise<void>;
 }
 
@@ -101,6 +105,7 @@ function taskDraft(task: Task | null): UpdateTask {
         deadline: task.deadline?.slice(0, 10) ?? null,
         plannedDate: task.plannedDate?.slice(0, 10) ?? null,
         goalId: task.goalId ?? null,
+        groupId: task.groupId ?? null,
         tags: task.tags,
       }
     : {};
@@ -523,7 +528,7 @@ function DescriptionImagesEditor({
   );
 }
 
-export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, goals, onStructureChanged }: TaskDrawerProps): ReactElement | null {
+export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, goals, taskGroups, onCreateTaskGroup, onStructureChanged }: TaskDrawerProps): ReactElement | null {
   const [tab, setTab] = useState<"details" | "structure" | "history">("details");
   const [draft, setDraft] = useState<UpdateTask>(() => taskDraft(task));
   const [history, setHistory] = useState<TaskEvent[]>([]);
@@ -531,6 +536,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tagInput, setTagInput] = useState("");
+  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
   const previousTaskId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -538,6 +544,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
     if (!task || previousTaskId.current === null) setTab("details");
     setError("");
     setTagInput("");
+    setGroupCreatorOpen(false);
     previousTaskId.current = task?.id ?? null;
   }, [task]);
 
@@ -762,6 +769,43 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                 ))}
               </select>
             </label>
+            <div className="field field-full detail-group-control">
+              <span>任务分组</span>
+              <div className="detail-group-picker">
+                <select
+                  aria-label="任务分组"
+                  value={draft.groupId ?? ""}
+                  onChange={(event) => setDraft({
+                    ...draft,
+                    groupId: event.target.value || null,
+                  })}
+                >
+                  <option value="">未分组</option>
+                  {taskGroups.map((group) => (
+                    <option value={group.id} key={group.id}>{group.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  aria-expanded={groupCreatorOpen}
+                  aria-controls="detail-task-group-creator"
+                  onClick={() => setGroupCreatorOpen((current) => !current)}
+                >新建分组</button>
+              </div>
+              {groupCreatorOpen && (
+                <TaskGroupCreator
+                  idPrefix="detail-task-group"
+                  variant="detail"
+                  onCreate={onCreateTaskGroup}
+                  onCreated={(group) => {
+                    setDraft((current) => ({ ...current, groupId: group.id }));
+                    setGroupCreatorOpen(false);
+                  }}
+                  onCancel={() => setGroupCreatorOpen(false)}
+                />
+              )}
+            </div>
           </div>
           <div className="field field-full tag-field">
             <span>标签 <small>可连续添加，最多 50 个</small></span>

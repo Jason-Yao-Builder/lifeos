@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, PointerEvent as ReactPointerEvent, ReactElement } from "react";
 import type { LifeOSApi } from "./api";
+import { TaskViewTabs, useTaskViewSwipe } from "./TaskViewNavigation";
+import type { TaskViewKind } from "./TaskViewNavigation";
 import type { CalendarData, CalendarMode, Task } from "./types";
 import {
   addDays,
@@ -21,6 +23,7 @@ interface CalendarViewProps {
   onOpen: (task: Task) => void;
   onTaskSaved: (task: Task) => void;
   onToast: (message: string) => void;
+  onViewChange?: (view: TaskViewKind) => void;
 }
 
 function rangeFor(anchor: string, mode: CalendarMode): string[] {
@@ -34,12 +37,23 @@ function dateLabel(date: string): string {
     .format(new Date(`${date}T12:00:00`));
 }
 
+export function scrollCalendarAtPointerEdge(
+  currentTarget: HTMLElement,
+  clientX: number,
+  viewportWidth: number,
+): void {
+  const delta = clientX < 36 ? -18 : clientX > viewportWidth - 36 ? 18 : 0;
+  if (!delta) return;
+  currentTarget.closest<HTMLElement>(".calendar-scroll")?.scrollBy({ left: delta });
+}
+
 export function CalendarView({
   api,
   tasks,
   onOpen,
   onTaskSaved,
   onToast,
+  onViewChange,
 }: CalendarViewProps): ReactElement {
   const today = localDate(new Date());
   const [anchor, setAnchor] = useState(today);
@@ -52,6 +66,7 @@ export function CalendarView({
   const days = useMemo(() => rangeFor(anchor, mode), [anchor, mode]);
   const start = days[0] ?? anchor;
   const end = days.at(-1) ?? anchor;
+  const swipeHandlers = useTaskViewSwipe("calendar", onViewChange);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -112,9 +127,22 @@ export function CalendarView({
       : dateLabel(anchor);
 
   return (
-    <section className="board v02-page calendar-page" aria-labelledby="calendar-title">
+    <section
+      className="board v02-page calendar-page task-view-page"
+      aria-labelledby="task-views-title"
+      {...swipeHandlers}
+    >
       <header className="v02-page-header">
-        <div><p className="eyebrow">把任务放进时间</p><h1 id="calendar-title">日历</h1></div>
+        <div><p className="eyebrow">任务的时间视图</p><h1 id="task-views-title">视图</h1></div>
+        <TaskViewTabs current="calendar" onChange={onViewChange} />
+      </header>
+      <div
+        className="task-view-panel task-view-enter-from-left"
+        role="tabpanel"
+        id="task-view-panel-calendar"
+        aria-labelledby="task-view-tab-calendar"
+      >
+        <div className="task-view-options calendar-view-options">
         <div className="view-switcher" role="group" aria-label="日历视图">
           {(["month", "week", "day"] as CalendarMode[]).map((item) => (
             <button type="button" className={mode === item ? "active" : ""} aria-pressed={mode === item} key={item} onClick={() => setMode(item)}>
@@ -122,8 +150,8 @@ export function CalendarView({
             </button>
           ))}
         </div>
-      </header>
-      <div className="calendar-toolbar">
+        </div>
+        <div className="calendar-toolbar">
         <button type="button" className="button button-secondary" onClick={() => step(-1)} aria-label={`上一个${{ month: "月", week: "周", day: "日" }[mode]}`}>←</button>
         <button type="button" className="button button-secondary" onClick={() => setAnchor(today)}>今天</button>
         <div className="calendar-period-picker">
@@ -149,25 +177,28 @@ export function CalendarView({
           />
         </div>
         <button type="button" className="button button-secondary" onClick={() => step(1)} aria-label={`下一个${{ month: "月", week: "周", day: "日" }[mode]}`}>→</button>
+        </div>
+        {error && <div className="inline-error"><span>{error}</span><button onClick={() => void load()}>重试</button></div>}
+        {loading ? <div className="v02-loading">正在排列日历…</div> : (
+          <div className="calendar-scroll">
+            <CalendarGrid
+              days={days}
+              data={data}
+              mode={mode}
+              anchor={anchor}
+              today={today}
+              onOpen={onOpen}
+              onDrag={setDraggedId}
+              onMove={moveTask}
+              onHtmlDrop={(event, date) => {
+                event.preventDefault();
+                const id = draggedId ?? event.dataTransfer.getData("text/task-id");
+                if (id) void moveTask(id, date);
+              }}
+            />
+          </div>
+        )}
       </div>
-      {error && <div className="inline-error"><span>{error}</span><button onClick={() => void load()}>重试</button></div>}
-      {loading ? <div className="v02-loading">正在排列日历…</div> : (
-        <CalendarGrid
-          days={days}
-          data={data}
-          mode={mode}
-          anchor={anchor}
-          today={today}
-          onOpen={onOpen}
-          onDrag={setDraggedId}
-          onMove={moveTask}
-          onHtmlDrop={(event, date) => {
-            event.preventDefault();
-            const id = draggedId ?? event.dataTransfer.getData("text/task-id");
-            if (id) void moveTask(id, date);
-          }}
-        />
-      )}
     </section>
   );
 }
@@ -242,9 +273,7 @@ function CalendarGrid({
     }
     if (!drag.active) return;
     event.preventDefault();
-    const scroller = event.currentTarget.closest<HTMLElement>(".calendar-page");
-    if (event.clientX < 36) scroller?.scrollBy({ left: -18 });
-    if (event.clientX > window.innerWidth - 36) scroller?.scrollBy({ left: 18 });
+    scrollCalendarAtPointerEdge(event.currentTarget, event.clientX, window.innerWidth);
     const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-calendar-date]");
     drag.targetDate = cell?.dataset.calendarDate ?? null;
     setTouchTarget(drag.targetDate);

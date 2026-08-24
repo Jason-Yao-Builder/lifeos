@@ -13,6 +13,7 @@ function main(): void {
     printHeading('LifeOS state snapshot', filename);
     console.table({
       tasks: state.tasks.total,
+      taskGroups: state.taskGroups.total,
       activeTasks: state.tasks.active,
       softDeletedTasks: state.tasks.softDeleted,
       cards: state.cards.total,
@@ -35,6 +36,8 @@ function main(): void {
     console.table(state.tasks.byStatus);
     console.log('Tasks by temperature');
     console.table(state.tasks.byTemperature);
+    console.log(`Recent ${state.taskGroups.recent.length} task groups`);
+    console.table(state.taskGroups.recent);
     console.log(`Recent ${state.tasks.recent.length} tasks`);
     console.table(state.tasks.recent);
     console.log(`Recent ${state.events.recent.length} events`);

@@ -37,6 +37,14 @@ describe('createDatabase', () => {
     expect(handle.sqlite.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(handle.sqlite.pragma('busy_timeout', { simple: true })).toBe(5000);
     expect(handle.store.rules.list()).toHaveLength(3);
+    expect(handle.sqlite.prepare("PRAGMA foreign_key_list('tasks')").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: 'group_id', table: 'task_groups', on_delete: 'SET NULL' }),
+      ]),
+    );
+    handle.migrate();
+    expect(handle.sqlite.prepare('SELECT count(*) AS count FROM __drizzle_migrations').get())
+      .toEqual({ count: 4 });
   });
 
   it('creates contract-compatible tasks and appends audit events atomically', () => {
@@ -498,6 +506,6 @@ describe('createDatabase', () => {
       scoreDimensions: { effort: 80 },
     });
     expect(database.sqlite.prepare('SELECT count(*) AS count FROM __drizzle_migrations').get())
-      .toEqual({ count: 3 });
+      .toEqual({ count: 4 });
   });
 });

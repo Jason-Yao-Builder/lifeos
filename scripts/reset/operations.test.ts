@@ -7,7 +7,12 @@ describe('maintenance reset operations', () => {
     const database = createDatabase({ filename: ':memory:' });
     try {
       const goal = database.store.goals.create({ title: 'reset goal' });
-      const task = database.store.tasks.create({ title: 'reset me', goalId: goal.id });
+      const taskGroup = database.store.taskGroups.create({ name: 'reset group', color: '#2F6B52' });
+      const task = database.store.tasks.create({
+        title: 'reset me',
+        goalId: goal.id,
+        groupId: taskGroup.id,
+      });
       const predecessor = database.store.tasks.create({ title: 'dependency source' });
       database.store.taskImages.create({
         taskId: task.id,
@@ -44,6 +49,7 @@ describe('maintenance reset operations', () => {
 
       expect(workspaceCounts(database.sqlite)).toMatchObject({
         tasks: 2,
+        taskGroups: 1,
         aiRuns: 1,
         cards: 1,
         conversations: 1,
@@ -61,6 +67,7 @@ describe('maintenance reset operations', () => {
 
       expect(after).toEqual({
         tasks: 0,
+        taskGroups: 0,
         events: 0,
         aiRuns: 0,
         cards: 0,

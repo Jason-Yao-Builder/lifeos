@@ -17,6 +17,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     startAt: null,
     endAt: null,
     estimatedMinutes: null,
+    groupId: null,
     goalId: null,
     repeatTemplateId: null,
     parentTaskId: null,

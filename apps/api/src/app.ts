@@ -15,6 +15,7 @@ import { repeatTemplateRoutes } from './routes/repeat-templates.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { ruleRoutes } from './routes/rules.js';
 import { taskRoutes } from './routes/tasks.js';
+import { taskGroupRoutes } from './routes/task-groups.js';
 import { taskImageRoutes } from './routes/task-images.js';
 import { taskStructureRoutes } from './routes/task-structure.js';
 import type { AppDependencies } from './services.js';
@@ -53,6 +54,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       info: { title: 'LifeOS API', version: '0.2.0' },
       tags: [
         { name: 'tasks' },
+        { name: 'task-groups' },
         { name: 'days' },
         { name: 'cards' },
         { name: 'conversations' },
@@ -72,6 +74,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   installErrorHandling(app);
 
   await app.register(taskRoutes(dependencies), { prefix: '/api/v1' });
+  await app.register(taskGroupRoutes(dependencies), { prefix: '/api/v1' });
   await app.register(taskImageRoutes(dependencies), { prefix: '/api/v1' });
   await app.register(taskStructureRoutes(dependencies), { prefix: '/api/v1' });
   await app.register(dayRoutes(dependencies, timeZone), { prefix: '/api/v1' });

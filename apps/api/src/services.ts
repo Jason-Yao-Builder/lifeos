@@ -6,6 +6,7 @@ import type {
   RepeatTemplateRecord,
   RuleProposal,
   TaskDependencyRecord,
+  TaskGroup,
   TaskImageMetadata,
   TaskImageMimeType,
   TaskProgress,
@@ -138,6 +139,7 @@ export interface StoreTaskPatch {
   endAt?: string | null;
   estimatedMinutes?: number | null;
   actualMinutes?: number;
+  groupId?: string | null;
   scoreDimensions?: TaskScoreDimensions | null;
   score?: number | null;
   rank?: number;
@@ -185,6 +187,12 @@ export interface ApiStore {
       patch: StoreTaskPatch,
       actor?: ActorInput,
     ): TaskRecord;
+    inheritParentAttributes(
+      tenantId: string,
+      id: string,
+      expectedVersion: number,
+      actor?: ActorInput,
+    ): TaskRecord;
     reorder(tenantId: string, orderedIds: string[], actor?: ActorInput): TaskRecord[];
     reorderSubtasks(
       tenantId: string,
@@ -213,6 +221,20 @@ export interface ApiStore {
       expectedVersion: number,
       actor?: ActorInput,
     ) => void;
+  };
+  taskGroups: {
+    list(workspaceId?: string): TaskGroup[];
+    get(workspaceId: string, id: string): TaskGroup | null;
+    create(
+      input: { id?: string; workspaceId?: string; name: string; color: string },
+      actor?: ActorInput,
+    ): TaskGroup;
+    update(
+      workspaceId: string,
+      id: string,
+      patch: Partial<Pick<TaskGroup, 'name' | 'color'>>,
+      actor?: ActorInput,
+    ): TaskGroup;
   };
   taskImages: {
     list(tenantId: string, taskId: string): TaskImageMetadata[];

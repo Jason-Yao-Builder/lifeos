@@ -62,6 +62,82 @@ describe('subtask persistence', () => {
     });
   });
 
+  it('atomically inherits only group, tags, and scoring from the direct parent', () => {
+    const parentGroup = database.store.taskGroups.create({
+      name: 'Parent group',
+      color: '#336699',
+    });
+    const childGroup = database.store.taskGroups.create({
+      name: 'Child group',
+      color: '#993366',
+    });
+    const dimensions = { impact: 90, urgency: 70, alignment: 80, effort: 30 };
+    const parent = database.store.tasks.create({
+      title: 'Parent',
+      groupId: parentGroup.id,
+      tags: ['parent'],
+      scoreDimensions: dimensions,
+      score: 81.5,
+    });
+    const child = database.store.tasks.create({
+      title: 'Child title',
+      description: 'Child description',
+      temperature: 'cold',
+      status: 'in_progress',
+      groupId: childGroup.id,
+      parentTaskId: parent.id,
+      tags: ['child'],
+      scoreDimensions: { impact: 10, urgency: 20, alignment: 30, effort: 40 },
+      score: 21.5,
+    });
+    const eventCount = database.store.tasks.events(DEFAULT_TENANT_ID, child.id).length;
+
+    const inherited = database.store.tasks.inheritParentAttributes(
+      DEFAULT_TENANT_ID,
+      child.id,
+      child.version,
+      { type: 'human' },
+    );
+
+    expect(inherited).toMatchObject({
+      title: 'Child title',
+      description: 'Child description',
+      temperature: 'cold',
+      status: 'in_progress',
+      parentTaskId: parent.id,
+      groupId: parentGroup.id,
+      tags: ['parent'],
+      scoreDimensions: dimensions,
+      score: 81.5,
+      version: child.version + 1,
+    });
+    const events = database.store.tasks.events(DEFAULT_TENANT_ID, child.id);
+    expect(events).toHaveLength(eventCount + 1);
+    expect(events.at(-1)).toMatchObject({
+      type: 'task.parent_inherited',
+      before: expect.objectContaining({ groupId: childGroup.id, tags: ['child'] }),
+      after: expect.objectContaining({ groupId: parentGroup.id, tags: ['parent'] }),
+    });
+  });
+
+  it('clears child scoring when the direct parent has no scoring', () => {
+    const parent = database.store.tasks.create({ title: 'Unscored parent' });
+    const child = database.store.tasks.create({
+      title: 'Scored child',
+      parentTaskId: parent.id,
+      scoreDimensions: { impact: 80, urgency: 70, alignment: 60, effort: 50 },
+      score: 70,
+    });
+
+    const inherited = database.store.tasks.inheritParentAttributes(
+      DEFAULT_TENANT_ID,
+      child.id,
+      child.version,
+    );
+
+    expect(inherited).toMatchObject({ scoreDimensions: null, score: null });
+  });
+
   it('reorders only one parent direct children while preserving their global rank slots', () => {
     const parent = database.store.tasks.create({ title: 'Parent', rank: 1 });
     const otherParent = database.store.tasks.create({ title: 'Other parent', rank: 10 });

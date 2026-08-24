@@ -19,6 +19,7 @@ import type {
   Task,
   TaskDependency,
   TaskEvent,
+  TaskGroup,
   TaskImage,
   TaskListResponse,
   TaskProgress,
@@ -27,14 +28,21 @@ import type {
 } from "./types";
 import { createDemoApi } from "./demo";
 
-export type CreateSubtaskInput = Omit<CreateTask, "status" | "tags">;
+export type CreateSubtaskInput = Omit<CreateTask, "status" | "tags" | "groupId">;
 
 export interface LifeOSApi {
   getTasks(): Promise<Task[]>;
   getDay(date: string): Promise<Task[]>;
   createTask(input: CreateTask): Promise<Task>;
   updateTask(id: string, version: number, patch: UpdateTask): Promise<Task>;
+  inheritParentTask(id: string, version: number): Promise<Task>;
   reorderTasks(orderedIds: string[]): Promise<Task[]>;
+  getTaskGroups(): Promise<TaskGroup[]>;
+  createTaskGroup(input: Pick<TaskGroup, "name" | "color">): Promise<TaskGroup>;
+  updateTaskGroup(
+    id: string,
+    patch: Partial<Pick<TaskGroup, "name" | "color">>,
+  ): Promise<TaskGroup>;
   getTaskEvents(id: string): Promise<EventListResponse["items"]>;
   getTaskImages(taskId: string): Promise<TaskImage[]>;
   uploadTaskImage(taskId: string, input: UploadTaskImageInput): Promise<TaskImage>;
@@ -240,11 +248,36 @@ const httpApi: LifeOSApi = {
     });
     return "task" in result ? result.task : result;
   },
+  async inheritParentTask(id, version) {
+    const result = await request<Task | { task: Task }>(
+      `/tasks/${encodeURIComponent(id)}/inherit-parent`,
+      {
+        method: "POST",
+        body: JSON.stringify({ version }),
+      },
+    );
+    return "task" in result ? result.task : result;
+  },
   async reorderTasks(orderedIds) {
     return itemsOf(await request<Task[] | TaskListResponse>("/tasks/reorder", {
       method: "POST",
       body: JSON.stringify({ orderedIds }),
     }));
+  },
+  async getTaskGroups() {
+    return itemsOf(await request<TaskGroup[] | { items: TaskGroup[] }>("/task-groups"));
+  },
+  createTaskGroup(input) {
+    return request<TaskGroup>("/task-groups", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  updateTaskGroup(id, patch) {
+    return request<TaskGroup>(`/task-groups/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
   },
   async getTaskEvents(id) {
     return itemsOf(

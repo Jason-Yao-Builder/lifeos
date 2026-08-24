@@ -31,6 +31,7 @@ const inheritedChild: Task = {
   deadline: null,
   plannedDate: null,
   parentTaskId: "parent-1",
+  groupId: null,
   tags: ["父标签"],
   score: null,
   rank: 1,
@@ -62,6 +63,7 @@ describe("subtask API", () => {
     expect(JSON.parse(String(init.body))).toEqual(input);
     expect(JSON.parse(String(init.body))).not.toHaveProperty("tags");
     expect(JSON.parse(String(init.body))).not.toHaveProperty("status");
+    expect(JSON.parse(String(init.body))).not.toHaveProperty("groupId");
   });
 
   it("posts the complete sibling order and unwraps the returned items", async () => {
@@ -86,9 +88,47 @@ describe("subtask API", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({ orderedIds: ["child-2", "child-1"] });
   });
+
+  it("posts the current version when inheriting from the direct parent", async () => {
+    stubWindowTimers();
+    const inherited = { ...inheritedChild, version: 2, groupId: "group-parent", score: 88 };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ task: inherited }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = createApi();
+
+    await expect(api.inheritParentTask("child /1", 1)).resolves.toEqual(inherited);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/tasks/child%20%2F1/inherit-parent",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ version: 1 });
+  });
 });
 
 describe("demo subtask inheritance", () => {
+  it("copies the parent's current score snapshot", async () => {
+    const api = demoApi();
+    const scoreDimensions = { impact: 80, urgency: 70, alignment: 60, effort: 40 };
+    const parent = await api.createTask({
+      title: "有评分的父任务",
+      temperature: "hot",
+      scoreDimensions,
+    });
+
+    const child = await api.createSubtask(parent.id, {
+      title: "继承评分的子任务",
+      temperature: "warm",
+    });
+
+    expect(child.scoreDimensions).toEqual(scoreDimensions);
+    expect(child.scoreDimensions).not.toBe(parent.scoreDimensions);
+    expect(child.score).toBe(parent.score);
+  });
+
   it("ignores forged tags and status, then exposes inherited values after refresh", async () => {
     const api = demoApi();
     const forgedInput: CreateTask = {
@@ -97,6 +137,7 @@ describe("demo subtask inheritance", () => {
       status: "todo",
       plannedDate: null,
       tags: ["伪造标签"],
+      groupId: "伪造分组",
     };
 
     const child = await api.createSubtask("task-proposal", forgedInput);
@@ -107,6 +148,7 @@ describe("demo subtask inheritance", () => {
       plannedDate: null,
       status: "in_progress",
       tags: ["项目", "深度工作"],
+      groupId: "group-product",
     });
     expect(child.tags).not.toBe(forgedInput.tags);
     await expect(api.getSubtasks("task-proposal")).resolves.toContainEqual(child);
@@ -124,6 +166,35 @@ describe("demo subtask inheritance", () => {
     expect(child.status).toBe("completed");
     expect(child.completedAt).toBe(child.createdAt);
     expect(child.tags).toEqual(parent.tags);
+  });
+
+  it("atomically reapplies the parent's group, tags, and score snapshot", async () => {
+    const api = demoApi();
+    const parent = await api.updateTask("task-proposal", 3, {
+      tags: ["父任务标签"],
+      scoreDimensions: { impact: 90, urgency: 80, alignment: 70, effort: 20 },
+    });
+    const child = await api.createSubtask(parent.id, {
+      title: "可重新继承的子任务",
+      temperature: "warm",
+    });
+    const customized = await api.updateTask(child.id, child.version, {
+      groupId: null,
+      tags: ["自定义标签"],
+      scoreDimensions: { impact: 10, urgency: 20, alignment: 30, effort: 40 },
+    });
+
+    const inherited = await api.inheritParentTask(customized.id, customized.version);
+
+    expect(inherited).toMatchObject({
+      groupId: parent.groupId,
+      tags: parent.tags,
+      scoreDimensions: parent.scoreDimensions,
+      score: parent.score,
+      version: customized.version + 1,
+    });
+    expect(inherited.tags).not.toBe(parent.tags);
+    expect(inherited.scoreDimensions).not.toBe(parent.scoreDimensions);
   });
 
   it("strictly reorders all direct siblings in their existing rank slots and persists it", async () => {

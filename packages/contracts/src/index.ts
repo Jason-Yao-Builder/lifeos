@@ -10,4 +10,5 @@ export * from './repeat.js';
 export * from './review.js';
 export * from './rules.js';
 export * from './task.js';
+export * from './task-group.js';
 export * from './task-image.js';

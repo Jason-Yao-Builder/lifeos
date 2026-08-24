@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import type { CSSProperties, ReactElement } from "react";
 import { createApi, hasConfiguredApi } from "./api";
 import type { LifeOSApi } from "./api";
 import { AiDrawer, RulesDrawer, TaskDrawer } from "./Drawers";
@@ -10,7 +10,7 @@ import { CoachIcon, SettingsIcon } from "./Icons";
 import { MorningPlanner, ReviewView } from "./ReviewView";
 import { TaskBoard, taskCompletionMotionDuration } from "./TaskBoard";
 import type { TaskCompletionMotion, TaskFilters } from "./TaskBoard";
-import type { AiCard, CreateTask, Goal, Rule, Task, UpdateTask } from "./types";
+import type { AiCard, CreateTask, Goal, Rule, Task, TaskGroup, UpdateTask } from "./types";
 import { todayKey } from "./utils";
 import { mergeScopedOrder, reorderTaskIds } from "./v02-utils";
 import type { TaskDropPosition } from "./v02-utils";
@@ -23,7 +23,28 @@ const emptyFilters: TaskFilters = {
   status: "all",
   tag: "",
   time: "current",
+  group: "all",
 };
+
+const taskFilterTemperatures = new Set(["all", "hot", "warm", "cold", "inspiration"]);
+const taskFilterStatuses = new Set([
+  "all",
+  "todo",
+  "in_progress",
+  "completed",
+  "archived",
+  "abandoned",
+]);
+const taskFilterTimes = new Set([
+  "all",
+  "current",
+  "target_today",
+  "target_future",
+  "target_past",
+  "completed_today",
+  "completed_past",
+]);
+const taskFiltersHistoryKey = "lifeosTaskFilters";
 
 export function viewForPathname(pathname: string): View {
   if (pathname.startsWith("/review/")) return "review";
@@ -40,8 +61,300 @@ export function isSettingsArea(view: View): boolean {
   return view === "settings" || view === "goals";
 }
 
+export function isViewsArea(view: View): boolean {
+  return view === "calendar" || view === "gantt";
+}
+
+export interface TaskGroupNavigationItem {
+  id: TaskFilters["group"];
+  label: string;
+  color: string | null;
+  count: number;
+}
+
+export interface TemperatureNavigationItem {
+  id: TaskFilters["temperature"];
+  label: string;
+  count: number;
+}
+
+type SidebarGroupStyle = CSSProperties & { "--sidebar-group-color"?: string };
+
+export function taskGroupNavigationItems(
+  tasks: readonly Pick<Task, "groupId">[],
+  groups: readonly Pick<TaskGroup, "id" | "name" | "color">[],
+): TaskGroupNavigationItem[] {
+  const counts = new Map<string, number>();
+  for (const task of tasks) {
+    if (task.groupId) counts.set(task.groupId, (counts.get(task.groupId) ?? 0) + 1);
+  }
+  return [
+    { id: "all", label: "全部任务", color: null, count: tasks.length },
+    {
+      id: "ungrouped",
+      label: "未分组",
+      color: null,
+      count: tasks.filter((task) => !task.groupId).length,
+    },
+    ...groups.map((group) => ({
+      id: group.id,
+      label: group.name,
+      color: group.color,
+      count: counts.get(group.id) ?? 0,
+    })),
+  ];
+}
+
+export function taskFiltersForGroup(
+  filters: TaskFilters,
+  group: TaskFilters["group"],
+): TaskFilters {
+  return { ...filters, group };
+}
+
+export function temperatureNavigationItems(
+  tasks: readonly Pick<Task, "temperature">[],
+): TemperatureNavigationItem[] {
+  const temperatures: readonly Exclude<TaskFilters["temperature"], "all">[] = [
+    "hot",
+    "warm",
+    "cold",
+    "inspiration",
+  ];
+  const labels: Record<Exclude<TaskFilters["temperature"], "all">, string> = {
+    hot: "热",
+    warm: "温",
+    cold: "冷",
+    inspiration: "灵感",
+  };
+  return [
+    { id: "all", label: "全部温度", count: tasks.length },
+    ...temperatures.map((temperature) => ({
+      id: temperature,
+      label: labels[temperature],
+      count: tasks.filter((task) => task.temperature === temperature).length,
+    })),
+  ];
+}
+
+export function taskFiltersForTemperature(
+  filters: TaskFilters,
+  temperature: TaskFilters["temperature"],
+): TaskFilters {
+  return { ...filters, temperature };
+}
+
+export function taskGroupFromLocation(pathname: string, search: string): TaskFilters["group"] {
+  if (pathname !== "/tasks") return "all";
+  const rawGroup = new URLSearchParams(search).get("group")?.trim();
+  return rawGroup && rawGroup !== "all" ? rawGroup : "all";
+}
+
+export function taskTemperatureFromLocation(
+  pathname: string,
+  search: string,
+): TaskFilters["temperature"] {
+  if (pathname !== "/tasks") return "all";
+  const rawTemperature = new URLSearchParams(search).get("temperature")?.trim() ?? "all";
+  return taskFilterTemperatures.has(rawTemperature)
+    ? rawTemperature as TaskFilters["temperature"]
+    : "all";
+}
+
+export function taskGroupPath(
+  group: TaskFilters["group"],
+  temperature: TaskFilters["temperature"] = "all",
+): string {
+  const search = new URLSearchParams();
+  if (group !== "all") search.set("group", group);
+  if (temperature !== "all") search.set("temperature", temperature);
+  const query = search.toString();
+  return query ? `/tasks?${query}` : "/tasks";
+}
+
+export function isKnownTaskGroup(
+  group: TaskFilters["group"],
+  groups: readonly Pick<TaskGroup, "id">[],
+): boolean {
+  return group === "all" || group === "ungrouped" || groups.some((item) => item.id === group);
+}
+
+function isTaskFilters(value: unknown): value is TaskFilters {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<Record<keyof TaskFilters, unknown>>;
+  return typeof candidate.temperature === "string" &&
+    taskFilterTemperatures.has(candidate.temperature) &&
+    typeof candidate.status === "string" &&
+    taskFilterStatuses.has(candidate.status) &&
+    typeof candidate.tag === "string" &&
+    typeof candidate.time === "string" &&
+    taskFilterTimes.has(candidate.time) &&
+    typeof candidate.group === "string";
+}
+
+export function taskFiltersForHistoryEntry(
+  pathname: string,
+  search: string,
+  state: unknown,
+): TaskFilters {
+  if (viewForPathname(pathname) !== "tasks") return { ...emptyFilters };
+  const stored = state && typeof state === "object" && !Array.isArray(state)
+    ? (state as Record<string, unknown>)[taskFiltersHistoryKey]
+    : null;
+  const filters = isTaskFilters(stored) ? stored : emptyFilters;
+  return {
+    ...filters,
+    group: taskGroupFromLocation(pathname, search),
+    temperature: taskTemperatureFromLocation(pathname, search),
+  };
+}
+
+export function taskHistoryState(filters: TaskFilters, state: unknown): Record<string, unknown> {
+  const existing = state && typeof state === "object" && !Array.isArray(state)
+    ? state as Record<string, unknown>
+    : {};
+  return { ...existing, [taskFiltersHistoryKey]: { ...filters } };
+}
+
+export function shouldPushTaskGroupNavigation(
+  pathname: string,
+  search: string,
+  currentGroup: TaskFilters["group"],
+  nextGroup: TaskFilters["group"],
+  temperature: TaskFilters["temperature"] = "all",
+): boolean {
+  return currentGroup !== nextGroup ||
+    `${pathname}${search}` !== taskGroupPath(nextGroup, temperature);
+}
+
+export function shouldPushTaskTemperatureNavigation(
+  pathname: string,
+  search: string,
+  group: TaskFilters["group"],
+  currentTemperature: TaskFilters["temperature"],
+  nextTemperature: TaskFilters["temperature"],
+): boolean {
+  return currentTemperature !== nextTemperature ||
+    `${pathname}${search}` !== taskGroupPath(group, nextTemperature);
+}
+
+export function TaskGroupSidebar({
+  items,
+  selected,
+  expanded,
+  onToggle,
+  onSelect,
+}: {
+  items: readonly TaskGroupNavigationItem[];
+  selected: TaskFilters["group"] | null;
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (group: TaskFilters["group"]) => void;
+}): ReactElement {
+  return (
+    <section className="sidebar-task-groups" aria-label="任务分组">
+      <button
+        type="button"
+        className="sidebar-task-groups-toggle"
+        aria-expanded={expanded}
+        aria-controls="sidebar-task-group-list"
+        onClick={onToggle}
+      >
+        <span>任务分组</span>
+        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+      </button>
+      {expanded && (
+        <div id="sidebar-task-group-list" className="sidebar-task-group-list" role="group" aria-label="按任务分组筛选">
+          {items.map((item) => {
+            const active = selected === item.id;
+            const style = item.color
+              ? ({ "--sidebar-group-color": item.color } as SidebarGroupStyle)
+              : undefined;
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className={`sidebar-task-group-link ${active ? "active" : ""}`}
+                style={style}
+                aria-label={`${item.label}，${item.count} 项任务`}
+                aria-pressed={active}
+                onClick={() => onSelect(item.id)}
+              >
+                <i
+                  className={`sidebar-task-group-dot ${item.color ? "is-custom" : `is-${item.id}`}`}
+                  aria-hidden="true"
+                />
+                <span>{item.label}</span>
+                <small>{item.count}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function TemperatureSidebar({
+  items,
+  selected,
+  expanded,
+  onToggle,
+  onSelect,
+}: {
+  items: readonly TemperatureNavigationItem[];
+  selected: TaskFilters["temperature"];
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (temperature: TaskFilters["temperature"]) => void;
+}): ReactElement {
+  return (
+    <section className="sidebar-task-groups sidebar-temperatures" aria-label="温度分布">
+      <button
+        type="button"
+        className="sidebar-task-groups-toggle"
+        aria-expanded={expanded}
+        aria-controls="sidebar-temperature-list"
+        onClick={onToggle}
+      >
+        <span>温度分布</span>
+        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+      </button>
+      {expanded && (
+        <div id="sidebar-temperature-list" className="sidebar-task-group-list" role="group" aria-label="按温度筛选">
+          {items.map((item) => {
+            const active = selected === item.id;
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className={`sidebar-task-group-link sidebar-temperature-link is-${item.id} ${active ? "active" : ""}`}
+                aria-label={`${item.label}，${item.count} 项任务`}
+                aria-pressed={active}
+                onClick={() => onSelect(item.id)}
+              >
+                <i className={`sidebar-temperature-dot is-${item.id}`} aria-hidden="true" />
+                <span>{item.label}</span>
+                <small>{item.count}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function initialView(): View {
   return viewForPathname(window.location.pathname);
+}
+
+function initialTaskFilters(): TaskFilters {
+  return taskFiltersForHistoryEntry(
+    window.location.pathname,
+    window.location.search,
+    window.history.state,
+  );
 }
 
 function reviewRoute(): { type: "daily" | "weekly" | "monthly"; date: string } {
@@ -77,10 +390,14 @@ export function App(): ReactElement {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [todayTasks, setTodayTasks] = useState<Task[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [taskGroups, setTaskGroups] = useState<TaskGroup[]>([]);
   const [review, setReview] = useState(reviewRoute);
   const [cards, setCards] = useState<AiCard[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
-  const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
+  const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
+  const [taskGroupsLoaded, setTaskGroupsLoaded] = useState(false);
+  const [taskGroupsExpanded, setTaskGroupsExpanded] = useState(true);
+  const [temperaturesExpanded, setTemperaturesExpanded] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -103,12 +420,13 @@ export function App(): ReactElement {
   const loadData = useCallback(
     async (targetApi: LifeOSApi = api): Promise<void> => {
       setLoadState("loading");
-      const [taskResult, dayResult, cardResult, ruleResult, goalResult] = await Promise.allSettled([
+      const [taskResult, dayResult, cardResult, ruleResult, goalResult, groupResult] = await Promise.allSettled([
         targetApi.getTasks(),
         targetApi.getDay(todayKey()),
         targetApi.getCards(),
         targetApi.getRules(),
         targetApi.getGoals(),
+        targetApi.getTaskGroups(),
       ]);
       if (taskResult.status === "rejected") {
         setLoadState("error");
@@ -129,6 +447,10 @@ export function App(): ReactElement {
       setCards(cardResult.status === "fulfilled" ? cardResult.value : []);
       setRules(ruleResult.status === "fulfilled" ? ruleResult.value : []);
       setGoals(goalResult.status === "fulfilled" ? goalResult.value : []);
+      if (groupResult.status === "fulfilled") {
+        setTaskGroups(groupResult.value);
+        setTaskGroupsLoaded(true);
+      }
       setAiDegraded(cardResult.status === "rejected");
       setRulesError(ruleResult.status === "rejected");
       setLoadState("ready");
@@ -137,15 +459,31 @@ export function App(): ReactElement {
   );
 
   useEffect(() => {
-    if (window.location.pathname === "/") window.history.replaceState({}, "", "/tasks");
+    if (initialView() === "tasks") {
+      const entryFilters = initialTaskFilters();
+      window.history.replaceState(
+        taskHistoryState(entryFilters, window.history.state),
+        "",
+        taskGroupPath(entryFilters.group, entryFilters.temperature),
+      );
+    }
     void loadData();
   }, [loadData]);
 
   useEffect(() => {
     const onPopState = (): void => {
-      setView(initialView());
+      const nextView = initialView();
+      const nextFilters = initialTaskFilters();
+      setView(nextView);
       setReview(reviewRoute());
-      setFilters(emptyFilters);
+      setFilters(nextFilters);
+      if (nextView === "tasks") {
+        window.history.replaceState(
+          taskHistoryState(nextFilters, window.history.state),
+          "",
+          taskGroupPath(nextFilters.group, nextFilters.temperature),
+        );
+      }
     };
     const onOnline = (): void => setOffline(false);
     const onOffline = (): void => setOffline(true);
@@ -160,6 +498,21 @@ export function App(): ReactElement {
   }, []);
 
   useEffect(() => {
+    if (
+      !taskGroupsLoaded ||
+      view !== "tasks" ||
+      isKnownTaskGroup(filters.group, taskGroups)
+    ) return;
+    const normalized = taskFiltersForGroup(filters, "all");
+    setFilters(normalized);
+    window.history.replaceState(
+      taskHistoryState(normalized, window.history.state),
+      "",
+      taskGroupPath("all", normalized.temperature),
+    );
+  }, [filters, taskGroups, taskGroupsLoaded, view]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3600);
     return () => window.clearTimeout(timer);
@@ -169,12 +522,86 @@ export function App(): ReactElement {
     () => Array.from(new Set(tasks.flatMap((task) => task.tags))).sort(),
     [tasks],
   );
+  const taskGroupItems = useMemo(
+    () => taskGroupNavigationItems(tasks, taskGroups),
+    [taskGroups, tasks],
+  );
+  const temperatureItems = useMemo(() => temperatureNavigationItems(tasks), [tasks]);
 
   function navigate(next: View, replace = false): void {
+    const nextFilters = { ...emptyFilters };
     setView(next);
-    setFilters(emptyFilters);
+    setFilters(nextFilters);
     const path = next === "review" ? `/review/${review.type}/${review.date}` : `/${next}`;
-    window.history[replace ? "replaceState" : "pushState"]({}, "", path);
+    const state = next === "tasks" ? taskHistoryState(nextFilters, {}) : {};
+    window.history[replace ? "replaceState" : "pushState"](state, "", path);
+  }
+
+  function navigateToTaskGroup(
+    group: TaskFilters["group"],
+    nextFilters: TaskFilters = taskFiltersForGroup(filters, group),
+  ): void {
+    if (
+      view === "tasks" &&
+      !shouldPushTaskGroupNavigation(
+        window.location.pathname,
+        window.location.search,
+        filters.group,
+        group,
+        nextFilters.temperature,
+      )
+    ) return;
+    const normalized = taskFiltersForGroup(nextFilters, group);
+    setView("tasks");
+    setFilters(normalized);
+    window.history.pushState(
+      taskHistoryState(normalized, {}),
+      "",
+      taskGroupPath(group, normalized.temperature),
+    );
+  }
+
+  function navigateToTaskTemperature(
+    temperature: TaskFilters["temperature"],
+    nextFilters: TaskFilters = taskFiltersForTemperature(filters, temperature),
+  ): void {
+    if (
+      view === "tasks" &&
+      !shouldPushTaskTemperatureNavigation(
+        window.location.pathname,
+        window.location.search,
+        nextFilters.group,
+        filters.temperature,
+        temperature,
+      )
+    ) return;
+    const normalized = taskFiltersForTemperature(nextFilters, temperature);
+    setView("tasks");
+    setFilters(normalized);
+    window.history.pushState(
+      taskHistoryState(normalized, {}),
+      "",
+      taskGroupPath(normalized.group, temperature),
+    );
+  }
+
+  function changeTaskFilters(nextFilters: TaskFilters): void {
+    if (nextFilters.group !== filters.group) {
+      navigateToTaskGroup(nextFilters.group, nextFilters);
+      return;
+    }
+    if (nextFilters.temperature !== filters.temperature) {
+      navigateToTaskTemperature(nextFilters.temperature, nextFilters);
+      return;
+    }
+    setFilters(nextFilters);
+    if (view === "tasks") {
+      window.history.replaceState(
+        taskHistoryState(nextFilters, window.history.state),
+        "",
+        taskGroupPath(nextFilters.group, nextFilters.temperature),
+      );
+    }
   }
 
   function navigateReview(type: "daily" | "weekly" | "monthly", date: string): void {
@@ -200,6 +627,47 @@ export function App(): ReactElement {
       setToast("任务已添加");
     } catch (reason) {
       setToast(reason instanceof Error ? reason.message : "添加失败，内容已保留");
+      throw reason;
+    }
+  }
+
+  async function inheritParentTask(task: Task): Promise<void> {
+    try {
+      const saved = await api.inheritParentTask(task.id, task.version);
+      acceptExternalTask(saved);
+      setToast("已继承父任务的分组、标签与评分");
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : "继承失败，任务保持不变");
+      throw reason;
+    }
+  }
+
+  async function createTaskGroup(
+    input: Pick<TaskGroup, "name" | "color">,
+  ): Promise<TaskGroup> {
+    try {
+      const created = await api.createTaskGroup(input);
+      setTaskGroups((current) => [...current, created]
+        .sort((left, right) => left.name.localeCompare(right.name, "zh-CN")));
+      setToast("分组已创建");
+      return created;
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : "分组创建失败，输入已保留");
+      throw reason;
+    }
+  }
+
+  async function updateTaskGroup(
+    id: string,
+    patch: Partial<Pick<TaskGroup, "name" | "color">>,
+  ): Promise<TaskGroup> {
+    try {
+      const updated = await api.updateTaskGroup(id, patch);
+      setTaskGroups((current) => current.map((group) => group.id === id ? updated : group));
+      setToast("分组已更新");
+      return updated;
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : "分组更新失败");
       throw reason;
     }
   }
@@ -505,6 +973,9 @@ export function App(): ReactElement {
     (card) => card.status === "pending" || card.status === "discussing",
   ).length;
   const settingsActive = isSettingsArea(view);
+  const viewsActive = isViewsArea(view);
+  const selectedTaskGroupItem = taskGroupItems.find((item) => item.id === filters.group)
+    ?? taskGroupItems[0];
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -525,14 +996,13 @@ export function App(): ReactElement {
           </button>
           <button
             type="button"
-            className={view === "calendar" ? "active" : ""}
-            aria-current={view === "calendar" ? "page" : undefined}
-            onClick={() => navigate("calendar")}
+            className={viewsActive ? "active" : ""}
+            aria-current={viewsActive ? "page" : undefined}
+            onClick={() => {
+              if (!viewsActive) navigate("calendar");
+            }}
           >
-            <span aria-hidden="true">▦</span><span>日历</span>
-          </button>
-          <button type="button" className={view === "gantt" ? "active" : ""} onClick={() => navigate("gantt")}>
-            <span aria-hidden="true">≡</span><span>甘特图</span>
+            <span aria-hidden="true">▦</span><span>视图</span>
           </button>
         </nav>
         <div className="sidebar-section">
@@ -555,13 +1025,22 @@ export function App(): ReactElement {
             <span>设置</span>
           </button>
         </div>
-        <div className="temperature-key">
-          <span className="sidebar-label">温度分布</span>
-          <div><i className="dot-hot" /><span>热</span><b>{tasks.filter((task) => task.temperature === "hot").length}</b></div>
-          <div><i className="dot-warm" /><span>温</span><b>{tasks.filter((task) => task.temperature === "warm").length}</b></div>
-          <div><i className="dot-cold" /><span>冷</span><b>{tasks.filter((task) => task.temperature === "cold").length}</b></div>
-          <div><i className="dot-inspiration" /><span>灵感</span><b>{tasks.filter((task) => task.temperature === "inspiration").length}</b></div>
-        </div>
+        <TaskGroupSidebar
+          items={taskGroupItems}
+          selected={view === "tasks" ? filters.group : null}
+          expanded={taskGroupsExpanded}
+          onToggle={() => setTaskGroupsExpanded((current) => !current)}
+          onSelect={navigateToTaskGroup}
+        />
+        <TemperatureSidebar
+          items={temperatureItems}
+          selected={filters.temperature}
+          expanded={temperaturesExpanded}
+          onToggle={() => setTemperaturesExpanded((current) => !current)}
+          onSelect={(temperature) => changeTaskFilters(
+            taskFiltersForTemperature(filters, temperature),
+          )}
+        />
         <div className="sidebar-foot">
           <span className="avatar">Y</span>
           <div><strong>我的 LifeOS</strong><small>{demoMode ? "本地演示数据" : "已连接私有服务"}</small></div>
@@ -577,6 +1056,44 @@ export function App(): ReactElement {
         )}
         <div className="mobile-topbar">
           <div className="brand compact"><span className="brand-mark"><i /></span><strong>LifeOS</strong></div>
+          {(view === "tasks" || view === "today") && (
+            <div className="mobile-task-filters">
+              <label
+                className="mobile-task-facet-filter mobile-task-group-filter"
+                style={selectedTaskGroupItem?.color
+                  ? ({ "--sidebar-group-color": selectedTaskGroupItem.color } as SidebarGroupStyle)
+                  : undefined}
+              >
+                <i
+                  className={`sidebar-task-group-dot ${selectedTaskGroupItem?.color ? "is-custom" : `is-${filters.group}`}`}
+                  aria-hidden="true"
+                />
+                <select
+                  aria-label="移动端任务分组"
+                  value={filters.group}
+                  onChange={(event) => navigateToTaskGroup(event.target.value)}
+                >
+                  {taskGroupItems.map((item) => (
+                    <option value={item.id} key={item.id}>{item.label} · {item.count}</option>
+                  ))}
+                </select>
+              </label>
+              <label className={`mobile-task-facet-filter mobile-temperature-filter is-${filters.temperature}`}>
+                <i className={`sidebar-temperature-dot is-${filters.temperature}`} aria-hidden="true" />
+                <select
+                  aria-label="移动端温度"
+                  value={filters.temperature}
+                  onChange={(event) => navigateToTaskTemperature(
+                    event.target.value as TaskFilters["temperature"],
+                  )}
+                >
+                  {temperatureItems.map((item) => (
+                    <option value={item.id} key={item.id}>{item.label} · {item.count}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
           <div>
             <button className="icon-button" onClick={() => setAiOpen(true)} aria-label="AI 教练建议"><CoachIcon /></button>
             <button className={`icon-button ${settingsActive ? "active" : ""}`} onClick={() => navigate("settings")} aria-label="设置" aria-current={settingsActive ? "page" : undefined}><SettingsIcon /></button>
@@ -618,11 +1135,16 @@ export function App(): ReactElement {
             <TaskBoard
               view="today"
               tasks={todayTasks}
+              allTasks={tasks}
+              taskGroups={taskGroups}
               filters={filters}
               tags={tags}
-              onFiltersChange={setFilters}
+              onFiltersChange={changeTaskFilters}
               onAdd={addTask}
+              onCreateTaskGroup={createTaskGroup}
+              onUpdateTaskGroup={updateTaskGroup}
               onUpdate={safeTaskUpdate}
+              onInheritParent={inheritParentTask}
               completionMotions={completionMotions}
               onOpen={(task) => setSelectedTaskId(task.id)}
               onReorder={reorderTasks}
@@ -634,19 +1156,43 @@ export function App(): ReactElement {
           <TaskBoard
             view="tasks"
             tasks={tasks}
+            allTasks={tasks}
+            taskGroups={taskGroups}
             filters={filters}
             tags={tags}
-            onFiltersChange={setFilters}
+            onFiltersChange={changeTaskFilters}
             onAdd={addTask}
+            onCreateTaskGroup={createTaskGroup}
+            onUpdateTaskGroup={updateTaskGroup}
             onUpdate={safeTaskUpdate}
+            onInheritParent={inheritParentTask}
             completionMotions={completionMotions}
             onOpen={(task) => setSelectedTaskId(task.id)}
             onReorder={reorderTasks}
             onViewChange={(nextView) => navigate(nextView)}
           />
         )}
-        {loadState === "ready" && view === "calendar" && <CalendarView api={api} tasks={tasks} onOpen={(task) => setSelectedTaskId(task.id)} onTaskSaved={acceptExternalTask} onToast={setToast} />}
-        {loadState === "ready" && view === "gantt" && <GanttView api={api} goals={goals} onOpen={(task) => setSelectedTaskId(task.id)} onTaskSaved={acceptExternalTask} onToast={setToast} />}
+        {loadState === "ready" && view === "calendar" && (
+          <CalendarView
+            api={api}
+            tasks={tasks}
+            onOpen={(task) => setSelectedTaskId(task.id)}
+            onTaskSaved={acceptExternalTask}
+            onToast={setToast}
+            onViewChange={(nextView: "calendar" | "gantt") => navigate(nextView)}
+          />
+        )}
+        {loadState === "ready" && view === "gantt" && (
+          <GanttView
+            api={api}
+            goals={goals}
+            taskRevision={tasks.map((task) => `${task.id}:${task.version}:${task.groupId ?? ""}`).join("|")}
+            onOpen={(task) => setSelectedTaskId(task.id)}
+            onTaskSaved={acceptExternalTask}
+            onToast={setToast}
+            onViewChange={(nextView: "calendar" | "gantt") => navigate(nextView)}
+          />
+        )}
         {loadState === "ready" && view === "goals" && <GoalsView api={api} onOpenTask={(task) => setSelectedTaskId(task.id)} onToast={setToast} onGoalsChange={setGoals} onBack={() => navigate("settings", true)} />}
         {loadState === "ready" && view === "review" && <ReviewView api={api} type={review.type} date={review.date} onBack={() => navigate("today")} onToast={setToast} />}
         {loadState === "ready" && view === "settings" && (
@@ -689,14 +1235,13 @@ export function App(): ReactElement {
           <span>☰</span><small>任务</small>
         </button>
         <button
-          className={view === "calendar" ? "active" : ""}
-          aria-current={view === "calendar" ? "page" : undefined}
-          onClick={() => navigate("calendar")}
+          className={viewsActive ? "active" : ""}
+          aria-current={viewsActive ? "page" : undefined}
+          onClick={() => {
+            if (!viewsActive) navigate("calendar");
+          }}
         >
-          <span>▦</span><small>日历</small>
-        </button>
-        <button className={view === "gantt" ? "active" : ""} onClick={() => navigate("gantt")}>
-          <span>≡</span><small>甘特</small>
+          <span>▦</span><small>视图</small>
         </button>
         <button className={settingsActive ? "active" : ""} aria-current={settingsActive ? "page" : undefined} onClick={() => navigate("settings")}>
           <SettingsIcon /><small>设置</small>
@@ -706,6 +1251,8 @@ export function App(): ReactElement {
       <TaskDrawer
         task={selectedTask}
         api={api}
+        taskGroups={taskGroups}
+        onCreateTaskGroup={createTaskGroup}
         onClose={() => setSelectedTaskId(null)}
         onSave={persistTaskUpdate}
         onOpenTask={setSelectedTaskId}
