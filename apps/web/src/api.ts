@@ -1,16 +1,33 @@
 import type {
   AiCard,
   CardListResponse,
+  CalendarData,
+  CalendarMode,
+  CarryoverDecision,
   CreateTask,
+  DailyReviewContent,
   EventListResponse,
+  GanttData,
+  Goal,
+  GoalProgress,
+  MorningPlanningData,
+  RepeatTemplate,
+  ReviewCard,
+  ReviewType,
   Rule,
   RuleListResponse,
   Task,
+  TaskDependency,
   TaskEvent,
+  TaskImage,
   TaskListResponse,
+  TaskProgress,
   UpdateTask,
+  UploadTaskImageInput,
 } from "./types";
 import { createDemoApi } from "./demo";
+
+export type CreateSubtaskInput = Omit<CreateTask, "status" | "tags">;
 
 export interface LifeOSApi {
   getTasks(): Promise<Task[]>;
@@ -19,6 +36,10 @@ export interface LifeOSApi {
   updateTask(id: string, version: number, patch: UpdateTask): Promise<Task>;
   reorderTasks(orderedIds: string[]): Promise<Task[]>;
   getTaskEvents(id: string): Promise<EventListResponse["items"]>;
+  getTaskImages(taskId: string): Promise<TaskImage[]>;
+  uploadTaskImage(taskId: string, input: UploadTaskImageInput): Promise<TaskImage>;
+  getTaskImageContentUrl(taskId: string, imageId: string): string;
+  deleteTaskImage(taskId: string, imageId: string): Promise<void>;
   getCards(): Promise<AiCard[]>;
   decideCard(id: string, decision: "accept" | "reject"): Promise<void>;
   discussCard(id: string, message: string): Promise<string>;
@@ -31,6 +52,32 @@ export interface LifeOSApi {
     patch: Pick<Rule, "enabled"> | Pick<Rule, "parameters">,
   ): Promise<void>;
   evaluateRules(): Promise<void>;
+  getCalendar(start: string, end: string, view: CalendarMode): Promise<CalendarData>;
+  rescheduleTask(task: Task, plannedDate: string): Promise<Task>;
+  getGantt(start: string, end: string, goalId?: string): Promise<GanttData>;
+  updateTimespan(task: Task, startAt: string, endAt: string): Promise<Task>;
+  getGoals(status?: string): Promise<Goal[]>;
+  createGoal(input: Pick<Goal, "title" | "description" | "timeframe">): Promise<Goal>;
+  updateGoal(id: string, patch: Partial<Pick<Goal, "title" | "description" | "timeframe" | "status">>): Promise<Goal>;
+  deleteGoal(id: string): Promise<void>;
+  getGoalTasks(id: string): Promise<Task[]>;
+  getGoalProgress(id: string): Promise<GoalProgress>;
+  getDependencies(id: string): Promise<TaskDependency[]>;
+  addDependency(id: string, predecessorId: string): Promise<TaskDependency>;
+  deleteDependency(taskId: string, dependencyId: string): Promise<void>;
+  getSubtasks(id: string): Promise<Task[]>;
+  createSubtask(id: string, input: CreateSubtaskInput): Promise<Task>;
+  reorderSubtasks(parentId: string, orderedIds: string[]): Promise<Task[]>;
+  getTaskProgress(id: string): Promise<TaskProgress>;
+  getRepeatTemplates(): Promise<RepeatTemplate[]>;
+  createRepeatTemplate(input: Partial<RepeatTemplate> & Pick<RepeatTemplate, "title" | "cronExpr">): Promise<RepeatTemplate>;
+  generateRepeatTemplate(id: string): Promise<void>;
+  getMorning(date: string): Promise<MorningPlanningData>;
+  carryover(date: string, decisions: CarryoverDecision[]): Promise<Task[]>;
+  getReviews(type?: ReviewType, period?: string): Promise<ReviewCard[]>;
+  createDailyPlan(date: string, plannedTaskIds: string[], decisions: CarryoverDecision[]): Promise<ReviewCard>;
+  createDailyReview(date: string, content: DailyReviewContent): Promise<ReviewCard>;
+  generateReview(type: "weekly" | "monthly", date: string): Promise<ReviewCard>;
 }
 
 const configuredBase = (import.meta.env.VITE_API_URL as string | undefined)?.replace(
@@ -125,6 +172,30 @@ function apiRoot(): string {
     : `${configuredBase}/api/v1`;
 }
 
+function responseErrorMessage(body: string, status: number): string {
+  if (!body) return `请求失败（${status}）`;
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: {
+        message?: unknown;
+        details?: Array<{ path?: unknown; message?: unknown }>;
+      };
+    };
+    const message = typeof parsed.error?.message === "string" ? parsed.error.message : "";
+    const details = parsed.error?.details
+      ?.filter((detail) => typeof detail.message === "string")
+      .map((detail) => typeof detail.path === "string" && detail.path
+        ? `${detail.path}: ${String(detail.message)}`
+        : String(detail.message))
+      .join("；");
+    if (message && details) return `${message}：${details}`;
+    if (message) return message;
+  } catch {
+    return body;
+  }
+  return body;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 12_000);
@@ -139,8 +210,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       signal: controller.signal,
     });
     if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message || `请求失败（${response.status}）`);
+      const body = await response.text();
+      throw new Error(responseErrorMessage(body, response.status));
     }
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
@@ -179,6 +250,26 @@ const httpApi: LifeOSApi = {
     return itemsOf(
       await request<unknown[] | EventListResponse>(`/tasks/${id}/events`),
     ).map(normalizeEvent);
+  },
+  async getTaskImages(taskId) {
+    return itemsOf(await request<TaskImage[] | { items: TaskImage[] }>(
+      `/tasks/${encodeURIComponent(taskId)}/images`,
+    ));
+  },
+  uploadTaskImage(taskId, input) {
+    return request<TaskImage>(`/tasks/${encodeURIComponent(taskId)}/images`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  getTaskImageContentUrl(taskId, imageId) {
+    return `${apiRoot()}/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(imageId)}/content`;
+  },
+  async deleteTaskImage(taskId, imageId) {
+    await request(
+      `/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(imageId)}`,
+      { method: "DELETE" },
+    );
   },
   async getCards() {
     return itemsOf(await request<AiCard[] | CardListResponse>("/cards"));
@@ -236,6 +327,154 @@ const httpApi: LifeOSApi = {
   },
   async evaluateRules() {
     await request("/rules/evaluate", { method: "POST" });
+  },
+  async getCalendar(start, end, view) {
+    const query = new URLSearchParams({ start, end, view });
+    return request<CalendarData>(`/calendar?${query}`);
+  },
+  async rescheduleTask(task, plannedDate) {
+    return request<Task>(`/tasks/${task.id}/reschedule`, {
+      method: "PATCH",
+      body: JSON.stringify({ version: task.version, plannedDate }),
+    });
+  },
+  async getGantt(start, end, goalId) {
+    const query = new URLSearchParams({ start, end });
+    if (goalId) query.set("goalId", goalId);
+    const raw = await request<{
+      tasks: Array<Omit<Task, "progress"> & {
+        startsAt?: string | null;
+        endsAt?: string | null;
+        progress: number | TaskProgress;
+      }>;
+      dependencies: TaskDependency[];
+      criticalPath: string[];
+    }>(`/gantt?${query}`);
+    return {
+      ...raw,
+      tasks: raw.tasks.map((task) => ({
+        ...task,
+        startAt: task.startsAt ?? task.startAt ?? null,
+        endAt: task.endsAt ?? task.endAt ?? null,
+        progress: typeof task.progress === "number" ? task.progress : task.progress.percent,
+        isBlocked: task.isBlocked ?? false,
+      })),
+    };
+  },
+  async updateTimespan(task, startAt, endAt) {
+    return request<Task>(`/tasks/${task.id}/timespan`, {
+      method: "PATCH",
+      body: JSON.stringify({ version: task.version, startAt, endAt }),
+    });
+  },
+  async getGoals(status) {
+    const query = status ? `?${new URLSearchParams({ status })}` : "";
+    return itemsOf(await request<Goal[] | { items: Goal[] }>(`/goals${query}`));
+  },
+  createGoal(input) {
+    return request<Goal>("/goals", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateGoal(id, patch) {
+    return request<Goal>(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  async deleteGoal(id) {
+    await request(`/goals/${id}`, { method: "DELETE" });
+  },
+  async getGoalTasks(id) {
+    return itemsOf(await request<Task[] | TaskListResponse>(`/goals/${id}/tasks`));
+  },
+  getGoalProgress(id) {
+    return request<GoalProgress>(`/goals/${id}/progress`);
+  },
+  async getDependencies(id) {
+    const value = await request<
+      TaskDependency[] | { predecessors: TaskDependency[]; successors: TaskDependency[] }
+    >(`/tasks/${id}/dependencies`);
+    return Array.isArray(value) ? value : [...value.predecessors, ...value.successors];
+  },
+  addDependency(id, predecessorId) {
+    return request<TaskDependency>(`/tasks/${id}/dependencies`, {
+      method: "POST",
+      body: JSON.stringify({ predecessorId, type: "finish_to_start" }),
+    });
+  },
+  async deleteDependency(taskId, dependencyId) {
+    await request(`/tasks/${taskId}/dependencies/${dependencyId}`, { method: "DELETE" });
+  },
+  async getSubtasks(id) {
+    return itemsOf(await request<Task[] | TaskListResponse>(`/tasks/${id}/subtasks`));
+  },
+  createSubtask(id, input) {
+    return request<Task>(`/tasks/${id}/subtasks`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  async reorderSubtasks(parentId, orderedIds) {
+    return itemsOf(await request<Task[] | TaskListResponse>(
+      `/tasks/${encodeURIComponent(parentId)}/subtasks/reorder`,
+      {
+        method: "POST",
+        body: JSON.stringify({ orderedIds }),
+      },
+    ));
+  },
+  getTaskProgress(id) {
+    return request<TaskProgress>(`/tasks/${id}/progress`);
+  },
+  async getRepeatTemplates() {
+    return itemsOf(await request<RepeatTemplate[] | { items: RepeatTemplate[] }>("/repeat-templates"));
+  },
+  createRepeatTemplate(input) {
+    return request<RepeatTemplate>("/repeat-templates", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  async generateRepeatTemplate(id) {
+    await request(`/repeat-templates/${id}/generate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+  getMorning(date) {
+    return request<MorningPlanningData>(`/days/${date}/morning`);
+  },
+  async carryover(date, decisions) {
+    const value = await request<Task[] | TaskListResponse>(`/days/${date}/carryover`, {
+      method: "POST",
+      body: JSON.stringify({ decisions }),
+    });
+    return itemsOf(value);
+  },
+  async getReviews(type, period) {
+    const query = new URLSearchParams();
+    if (type) query.set("type", type);
+    if (period) query.set("period", period);
+    const suffix = query.size ? `?${query}` : "";
+    return itemsOf(await request<ReviewCard[] | { items: ReviewCard[] }>(`/reviews${suffix}`));
+  },
+  createDailyPlan(date, plannedTaskIds, decisions) {
+    return request<ReviewCard>("/reviews/daily-plan", {
+      method: "POST",
+      body: JSON.stringify({ date, plannedTaskIds, carryoverDecisions: decisions }),
+    });
+  },
+  createDailyReview(date, content) {
+    return request<ReviewCard>("/reviews/daily-review", {
+      method: "POST",
+      body: JSON.stringify({
+        date,
+        incompleteReasons: content.incompleteReasons,
+        totalFocusMinutes: content.totalFocusMinutes,
+      }),
+    });
+  },
+  generateReview(type, date) {
+    return request<ReviewCard>(`/reviews/${type}`, {
+      method: "POST",
+      body: JSON.stringify({ date }),
+    });
   },
 };
 

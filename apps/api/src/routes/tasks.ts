@@ -37,7 +37,14 @@ export function taskRoutes(
         ...omitUndefined(query),
         tenantId: dependencies.tenantId,
       });
-      return { items: tasks.map(projectTask) };
+      return {
+        items: tasks.map((task) =>
+          projectTask(
+            task,
+            dependencies.store.dependencies.isBlocked(dependencies.tenantId, task.id),
+          ),
+        ),
+      };
     });
 
     app.post('/tasks', { schema: docs('Create a task', ['tasks']) }, async (request, reply) => {
@@ -50,7 +57,7 @@ export function taskRoutes(
       const task = input.scoreDimensions
         ? created
         : await scoreWithoutBlocking(dependencies, created, request.id);
-      return reply.status(201).send(projectTask(task));
+      return reply.status(201).send(projectTask(task, false));
     });
 
     app.post('/tasks/reorder', { schema: docs('Reorder tasks', ['tasks']) }, async (request) => {
@@ -60,14 +67,24 @@ export function taskRoutes(
         body.orderedIds,
         actorFor(request),
       );
-      return { items: tasks.map(projectTask) };
+      return {
+        items: tasks.map((task) =>
+          projectTask(
+            task,
+            dependencies.store.dependencies.isBlocked(dependencies.tenantId, task.id),
+          ),
+        ),
+      };
     });
 
     app.get('/tasks/:id', { schema: docs('Get a task', ['tasks']) }, async (request) => {
       const { id } = parseWith(IdParamsSchema, request.params);
       const task = await dependencies.store.tasks.get(dependencies.tenantId, id);
       if (!task) throw new ResourceNotFoundError('task', id);
-      return projectTask(task);
+      return projectTask(
+        task,
+        dependencies.store.dependencies.isBlocked(dependencies.tenantId, task.id),
+      );
     });
 
     app.patch('/tasks/:id', { schema: docs('Update a task', ['tasks']) }, async (request) => {
@@ -87,11 +104,19 @@ export function taskRoutes(
       ) {
         throw new InvalidTransitionError('task', current.status, patch.status);
       }
+      const validatedPatch = omitUndefined(validation.data);
+      const persistedPatch = validation.data.scoreDimensions
+        ? {
+            ...validatedPatch,
+            scoreDimensions: validation.data.scoreDimensions,
+            score: calculateTaskScore(validation.data.scoreDimensions).score,
+          }
+        : validatedPatch;
       let updated = await dependencies.store.tasks.update(
         dependencies.tenantId,
         id,
         version,
-        omitUndefined(validation.data),
+        persistedPatch,
         actorFor(request),
       );
       if (
@@ -100,7 +125,10 @@ export function taskRoutes(
       ) {
         updated = await scoreWithoutBlocking(dependencies, updated, request.id);
       }
-      return projectTask(updated);
+      return projectTask(
+        updated,
+        dependencies.store.dependencies.isBlocked(dependencies.tenantId, updated.id),
+      );
     });
 
     app.delete('/tasks/:id', { schema: docs('Delete or archive a task', ['tasks']) }, async (request, reply) => {
@@ -149,6 +177,28 @@ function normalizePatchDeadline(input: unknown): unknown {
 function projectTaskEvent(event: EventRecord) {
   const before = asRecord(event.before);
   const after = asRecord(event.after);
+  const actor =
+    event.actorType === 'human'
+      ? ('user' as const)
+      : event.actorType === 'system'
+        ? ('rule' as const)
+        : event.actorType;
+  if (event.type === 'task.image.added' || event.type === 'task.image.deleted') {
+    const added = event.type === 'task.image.added';
+    const metadata = added ? after : before;
+    const fileName = typeof metadata.fileName === 'string' ? metadata.fileName : null;
+    const action = added ? '添加图片' : '删除图片';
+    return [{
+      id: event.id,
+      taskId: event.aggregateId,
+      field: 'image',
+      oldValue: added ? null : fileName,
+      newValue: added ? fileName : null,
+      actor,
+      summary: fileName ? `${action}「${fileName}」` : action,
+      createdAt: event.createdAt,
+    }];
+  }
   const ignored = new Set(['updatedAt', 'version']);
   const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
     (field) => !ignored.has(field) && JSON.stringify(before[field]) !== JSON.stringify(after[field]),
@@ -160,12 +210,7 @@ function projectTaskEvent(event: EventRecord) {
     field,
     oldValue: before[field] ?? null,
     newValue: after[field] ?? null,
-    actor:
-      event.actorType === 'human'
-        ? ('user' as const)
-        : event.actorType === 'system'
-          ? ('rule' as const)
-          : event.actorType,
+    actor,
     summary: `${event.type}: ${field}`,
     createdAt: event.createdAt,
   }));

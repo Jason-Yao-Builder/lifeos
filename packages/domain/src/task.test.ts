@@ -25,6 +25,12 @@ const task: TaskRecord = {
   startAt: null,
   endAt: null,
   estimatedMinutes: null,
+  goalId: null,
+  repeatTemplateId: null,
+  parentTaskId: null,
+  plannedStartTime: null,
+  plannedEndTime: null,
+  carryOverFrom: null,
   actualMinutes: 0,
   scoreDimensions: null,
   score: null,
@@ -75,6 +81,17 @@ describe('task input validation', () => {
     );
 
     expect(result.success).toBe(false);
+  });
+
+  it('validates the reserved local planning time range', () => {
+    const result = validateCreateTaskInput({
+      title: 'Focus block',
+      plannedStartTime: '18:00',
+      plannedEndTime: '09:00',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues[0]?.path).toBe('plannedEndTime');
   });
 
   it('offers throwing validation and derives hardness only from deadline', () => {

@@ -8,7 +8,7 @@ export interface AppConfig {
   workspaceTimezone: string;
   debugApiEnabled: boolean;
   debugApiKey?: string;
-  corsOrigin: string | boolean;
+  corsOrigin?: string | boolean;
 }
 
 function asBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -23,6 +23,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const debugApiKey = env.DEBUG_API_KEY?.trim();
+  const corsOrigin = env.CORS_ORIGIN?.trim();
   const configuredDatabase = env.DATABASE_URL?.trim();
   const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url));
   const defaultDatabase = resolve(workspaceRoot, 'data/lifeos.db');
@@ -36,7 +37,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workspaceTimezone: env.WORKSPACE_TIMEZONE ?? 'Asia/Shanghai',
     debugApiEnabled: asBoolean(env.DEBUG_API_ENABLED, env.NODE_ENV !== 'production'),
     ...(debugApiKey ? { debugApiKey } : {}),
-    corsOrigin: env.CORS_ORIGIN ?? true,
+    ...(corsOrigin ? { corsOrigin } : {}),
   };
 }
 

@@ -131,7 +131,7 @@ describe('AI idempotency and debug API', () => {
   });
 
   it('publishes an OpenAPI document and CORS headers', async () => {
-    harness = await createTestHarness();
+    harness = await createTestHarness({ corsOrigin: 'https://lifeos.local' });
     const docs = await harness.app.inject({ method: 'GET', url: '/docs/json' });
     expect(docs.statusCode).toBe(200);
     expect(docs.json().paths).toHaveProperty('/api/v1/tasks');
@@ -236,7 +236,7 @@ describe('AI idempotency and debug API', () => {
     expect(response.statusCode).toBe(200);
     expect(scoringCalls).toBe(0);
     expect(response.json().results[0]).toMatchObject({
-      task: { scoreDimensions: dimensions, score: 74.5, version: 1 },
+      task: { scoreDimensions: dimensions, score: 75.5, version: 1 },
     });
   });
 
@@ -287,7 +287,7 @@ describe('AI idempotency and debug API', () => {
       });
       expect(context.find((task) => task.id === manual.id)).toMatchObject({
         scoreDimensions: manual.scoreDimensions,
-        score: 74.5,
+        score: 75.5,
       });
     }
   });

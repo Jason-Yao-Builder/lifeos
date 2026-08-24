@@ -1,7 +1,14 @@
 import type {
   CardStatus,
   CreateTaskInput,
+  GoalProgress,
+  GoalRecord,
+  RepeatTemplateRecord,
   RuleProposal,
+  TaskDependencyRecord,
+  TaskImageMetadata,
+  TaskImageMimeType,
+  TaskProgress,
   TaskRecord,
   TaskScoreDimensions,
   TaskStatus,
@@ -105,9 +112,19 @@ export interface TaskFilters {
   query?: string;
   deadlineFrom?: string;
   deadlineTo?: string;
+  goalId?: string;
+  parentTaskId?: string | null;
+  repeatTemplateId?: string;
   limit?: number;
   offset?: number;
 }
+
+export type StoreCreateTaskInput = Omit<CreateTaskInput, 'status'> & {
+  status?: TaskStatus;
+  tenantId?: string;
+  ownerId?: string;
+  score?: number | null;
+};
 
 export interface StoreTaskPatch {
   title?: string;
@@ -124,13 +141,43 @@ export interface StoreTaskPatch {
   scoreDimensions?: TaskScoreDimensions | null;
   score?: number | null;
   rank?: number;
+  parentTaskId?: string | null;
+  goalId?: string | null;
+  repeatTemplateId?: string | null;
+  plannedStartTime?: string | null;
+  plannedEndTime?: string | null;
+  carryOverFrom?: string | null;
+}
+
+export interface RepeatGenerationResult {
+  templateId: string;
+  dates: string[];
+  tasks: TaskRecord[];
+  lastGenerated: string | null;
+}
+
+export interface StoredTaskImageContent {
+  metadata: TaskImageMetadata;
+  data: Buffer;
+}
+
+export interface StoredReviewCard {
+  id: string;
+  workspaceId: string;
+  ownerId: string;
+  type: 'daily_plan' | 'daily_review' | 'weekly_review' | 'monthly_review';
+  periodStart: string;
+  periodEnd: string;
+  content: unknown;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ApiStore {
   tasks: {
     list(filters?: TaskFilters): TaskRecord[];
     get(tenantId: string, id: string): TaskRecord | null;
-    create(input: CreateTaskInput & { score?: number | null }, actor?: ActorInput): TaskRecord;
+    create(input: StoreCreateTaskInput, actor?: ActorInput): TaskRecord;
     update(
       tenantId: string,
       id: string,
@@ -139,13 +186,180 @@ export interface ApiStore {
       actor?: ActorInput,
     ): TaskRecord;
     reorder(tenantId: string, orderedIds: string[], actor?: ActorInput): TaskRecord[];
+    reorderSubtasks(
+      tenantId: string,
+      parentId: string,
+      orderedIds: string[],
+      actor?: ActorInput,
+    ): TaskRecord[];
     events(tenantId: string, taskId: string): EventRecord[];
+    listSubtasks(tenantId: string, parentId: string): TaskRecord[];
+    progress(tenantId: string, parentId: string): TaskProgress;
+    listCalendar(filters: {
+      tenantId?: string;
+      start: string;
+      end: string;
+      goalId?: string;
+    }): TaskRecord[];
+    listGantt(filters: {
+      tenantId?: string;
+      start: string;
+      end: string;
+      goalId?: string;
+    }): TaskRecord[];
     softDelete: (
       tenantId: string,
       id: string,
       expectedVersion: number,
       actor?: ActorInput,
     ) => void;
+  };
+  taskImages: {
+    list(tenantId: string, taskId: string): TaskImageMetadata[];
+    getContent(
+      tenantId: string,
+      taskId: string,
+      imageId: string,
+    ): StoredTaskImageContent | null;
+    create(
+      input: {
+        id?: string;
+        tenantId?: string;
+        taskId: string;
+        fileName: string;
+        mimeType: TaskImageMimeType;
+        data: Buffer;
+      },
+      actor?: ActorInput,
+    ): TaskImageMetadata;
+    remove(
+      tenantId: string,
+      taskId: string,
+      imageId: string,
+      actor?: ActorInput,
+    ): TaskImageMetadata;
+  };
+  goals: {
+    list(filters?: { tenantId?: string; status?: GoalRecord['status'] }): GoalRecord[];
+    get(tenantId: string, id: string): GoalRecord | null;
+    create(
+      input: {
+        tenantId?: string;
+        ownerId?: string;
+        title: string;
+        description?: string | null;
+        timeframe?: string | null;
+        status?: GoalRecord['status'];
+        rank?: number;
+      },
+      actor?: ActorInput,
+    ): GoalRecord;
+    update(
+      tenantId: string,
+      id: string,
+      patch: Partial<Pick<GoalRecord, 'title' | 'description' | 'timeframe' | 'status' | 'rank'>>,
+      actor?: ActorInput,
+    ): GoalRecord;
+    softDelete(tenantId: string, id: string, actor?: ActorInput): void;
+    tasks(tenantId: string, id: string): TaskRecord[];
+    progress(tenantId: string, id: string): GoalProgress;
+  };
+  dependencies: {
+    listForTask(tenantId: string, taskId: string): {
+      predecessors: TaskDependencyRecord[];
+      successors: TaskDependencyRecord[];
+    };
+    create(
+      input: {
+        tenantId?: string;
+        predecessorId: string;
+        successorId: string;
+        type?: TaskDependencyRecord['type'];
+      },
+      actor?: ActorInput,
+    ): TaskDependencyRecord;
+    remove(tenantId: string, dependencyId: string, actor?: ActorInput): void;
+    isBlocked(tenantId: string, taskId: string): boolean;
+    criticalPath(tenantId: string, taskIds?: string[]): string[];
+  };
+  repeatTemplates: {
+    list(filters?: { tenantId?: string; enabled?: boolean }): RepeatTemplateRecord[];
+    get(tenantId: string, id: string): RepeatTemplateRecord | null;
+    create(
+      input: {
+        tenantId?: string;
+        ownerId?: string;
+        title: string;
+        description?: string | null;
+        temperature?: Temperature;
+        tags?: string[];
+        estimatedMinutes?: number | null;
+        goalId?: string | null;
+        cronExpr: string;
+        timezone?: string;
+        horizonDays?: number;
+        enabled?: boolean;
+      },
+      actor?: ActorInput,
+    ): RepeatTemplateRecord;
+    update(
+      tenantId: string,
+      id: string,
+      patch: Partial<
+        Pick<
+          RepeatTemplateRecord,
+          | 'title'
+          | 'description'
+          | 'temperature'
+          | 'tags'
+          | 'estimatedMinutes'
+          | 'goalId'
+          | 'cronExpr'
+          | 'timezone'
+          | 'horizonDays'
+          | 'enabled'
+        >
+      >,
+      actor?: ActorInput,
+    ): RepeatTemplateRecord;
+    softDelete(tenantId: string, id: string, actor?: ActorInput): void;
+    generate(
+      tenantId: string,
+      id: string,
+      options?: { throughDate?: string },
+      actor?: ActorInput,
+    ): RepeatGenerationResult;
+    generateAll(
+      tenantId?: string,
+      options?: { throughDate?: string },
+      actor?: ActorInput,
+    ): RepeatGenerationResult[];
+  };
+  reviews: {
+    list(filters?: {
+      tenantId?: string;
+      type?: StoredReviewCard['type'];
+      periodFrom?: string;
+      periodTo?: string;
+    }): StoredReviewCard[];
+    get(tenantId: string, id: string): StoredReviewCard | null;
+    create(
+      input: {
+        tenantId?: string;
+        ownerId?: string;
+        type: StoredReviewCard['type'];
+        periodStart: string;
+        periodEnd: string;
+        content: unknown;
+      },
+      actor?: ActorInput,
+    ): StoredReviewCard;
+    update(
+      tenantId: string,
+      id: string,
+      content: unknown,
+      actor?: ActorInput,
+    ): StoredReviewCard;
   };
   cards: {
     list(filters?: {

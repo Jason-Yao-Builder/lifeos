@@ -37,6 +37,6 @@ export function scoreTask(task: AITask, now: Date): TaskScoreResult {
     taskId: task.id,
     dimensions,
     score,
-    explanation: `温度 ${task.temperature} 决定影响与方向分；${deadlineReason}；预估时长是成本，越长 effort 越高。`,
+    explanation: `温度 ${task.temperature} 决定影响与方向分；${deadlineReason}；预估时长仅保留为 effort 元数据，不参与综合分。`,
   };
 }

@@ -12,6 +12,10 @@ import {
 import { z } from 'zod';
 
 export const IdParamsSchema = z.object({ id: EntityIdSchema }).strict();
+export const TaskImageTaskParamsSchema = z.object({ taskId: EntityIdSchema }).strict();
+export const TaskImageParamsSchema = z
+  .object({ taskId: EntityIdSchema, imageId: EntityIdSchema })
+  .strict();
 export const DayParamsSchema = z.object({ date: LocalDateSchema }).strict();
 
 export const TaskListQuerySchema = z

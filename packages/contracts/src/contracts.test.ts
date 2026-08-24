@@ -23,6 +23,12 @@ describe('task contracts', () => {
       startAt: null,
       endAt: null,
       estimatedMinutes: null,
+      goalId: null,
+      repeatTemplateId: null,
+      parentTaskId: null,
+      plannedStartTime: null,
+      plannedEndTime: null,
+      carryOverFrom: null,
       scoreDimensions: null,
     });
   });
@@ -31,6 +37,13 @@ describe('task contracts', () => {
     const dimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
     expect(CreateTaskInputSchema.parse({ title: 'Manual score', scoreDimensions: dimensions }).scoreDimensions).toEqual(dimensions);
     expect(CreateTaskInputSchema.safeParse({ title: 'Invalid score', scoreDimensions: { ...dimensions, impact: 101 } }).success).toBe(false);
+  });
+
+  it('accepts bounded manual score dimensions on update without an ambiguous clear', () => {
+    const dimensions = { impact: 90, urgency: 60, alignment: 90, effort: 40 };
+    expect(UpdateTaskInputSchema.parse({ scoreDimensions: dimensions })).toEqual({ scoreDimensions: dimensions });
+    expect(UpdateTaskInputSchema.safeParse({ scoreDimensions: null }).success).toBe(false);
+    expect(UpdateTaskInputSchema.safeParse({ scoreDimensions: { ...dimensions, urgency: -1 } }).success).toBe(false);
   });
 
   it('rejects duplicate normalized tags, unknown fields, and empty updates', () => {
@@ -61,6 +74,12 @@ describe('task contracts', () => {
       startAt: null,
       endAt: null,
       estimatedMinutes: 60,
+      goalId: null,
+      repeatTemplateId: null,
+      parentTaskId: null,
+      plannedStartTime: null,
+      plannedEndTime: null,
+      carryOverFrom: null,
       actualMinutes: 0,
       scoreDimensions: null,
       score: null,
@@ -71,6 +90,7 @@ describe('task contracts', () => {
       completedAt: null,
       deletedAt: null,
       hardness: 'hard',
+      isBlocked: false,
     });
 
     expect(parsed.hardness).toBe('hard');

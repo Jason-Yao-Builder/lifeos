@@ -1,4 +1,5 @@
 import { DEFAULT_TENANT_ID, type LifeOSDatabase } from '../../packages/db/src/index.js';
+import { taskImageStorageStats } from '../lib.js';
 
 type Sqlite = LifeOSDatabase['sqlite'];
 
@@ -14,6 +15,7 @@ function grouped(sqlite: Sqlite, sql: string, workspaceId: string): Record<strin
 export function inspectState(database: LifeOSDatabase, limit: number) {
   const sqlite = database.sqlite;
   const workspaceId = DEFAULT_TENANT_ID;
+  const imageStats = taskImageStorageStats(sqlite, workspaceId);
   return {
     generatedAt: new Date().toISOString(),
     tasks: {
@@ -33,6 +35,7 @@ export function inspectState(database: LifeOSDatabase, limit: number) {
     },
     conversations: count(sqlite, 'SELECT COUNT(*) value FROM conversations WHERE workspace_id = ?', workspaceId),
     messages: count(sqlite, `SELECT COUNT(*) value FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.workspace_id = ?`, workspaceId),
+    taskImages: imageStats,
     aiRuns: {
       total: count(sqlite, 'SELECT COUNT(*) value FROM ai_runs WHERE workspace_id = ?', workspaceId),
       byStatus: grouped(sqlite, 'SELECT status key, COUNT(*) value FROM ai_runs WHERE workspace_id = ? GROUP BY status', workspaceId),
@@ -40,6 +43,24 @@ export function inspectState(database: LifeOSDatabase, limit: number) {
     rules: {
       total: count(sqlite, 'SELECT COUNT(*) value FROM rules WHERE workspace_id = ?', workspaceId),
       enabled: count(sqlite, 'SELECT COUNT(*) value FROM rules WHERE workspace_id = ? AND enabled = 1', workspaceId),
+    },
+    goals: {
+      total: count(sqlite, 'SELECT COUNT(*) value FROM goals WHERE workspace_id = ?', workspaceId),
+      active: count(sqlite, 'SELECT COUNT(*) value FROM goals WHERE workspace_id = ? AND deleted_at IS NULL', workspaceId),
+      byStatus: grouped(sqlite, 'SELECT status key, COUNT(*) value FROM goals WHERE workspace_id = ? GROUP BY status', workspaceId),
+    },
+    dependencies: count(
+      sqlite,
+      'SELECT COUNT(*) value FROM task_dependencies WHERE workspace_id = ?',
+      workspaceId,
+    ),
+    repeatTemplates: {
+      total: count(sqlite, 'SELECT COUNT(*) value FROM repeat_templates WHERE workspace_id = ?', workspaceId),
+      enabled: count(sqlite, 'SELECT COUNT(*) value FROM repeat_templates WHERE workspace_id = ? AND enabled = 1 AND deleted_at IS NULL', workspaceId),
+    },
+    reviews: {
+      total: count(sqlite, 'SELECT COUNT(*) value FROM review_cards WHERE workspace_id = ?', workspaceId),
+      byType: grouped(sqlite, 'SELECT type key, COUNT(*) value FROM review_cards WHERE workspace_id = ? GROUP BY type', workspaceId),
     },
     events: {
       total: count(sqlite, 'SELECT COUNT(*) value FROM events WHERE workspace_id = ?', workspaceId),
@@ -77,7 +98,20 @@ function decode(value: string | null): Record<string, unknown> {
 function summarize(row: TimelineEventRow): string {
   const before = decode(row.beforeJson);
   const after = decode(row.afterJson);
-  const fields = ['status', 'temperature', 'plannedDate', 'deadline', 'rank', 'score', 'version'];
+  const fields = [
+    'status',
+    'temperature',
+    'plannedDate',
+    'deadline',
+    'startAt',
+    'endAt',
+    'goalId',
+    'parentTaskId',
+    'carryOverFrom',
+    'rank',
+    'score',
+    'version',
+  ];
   const changes = fields
     .map((field) => ({ field, before: before[field] ?? null, after: after[field] ?? null }))
     .filter(({ before: beforeValue, after: afterValue }) => JSON.stringify(beforeValue) !== JSON.stringify(afterValue))
@@ -90,7 +124,9 @@ export function inspectTaskTimeline(database: LifeOSDatabase, taskId: string) {
   const workspaceId = DEFAULT_TENANT_ID;
   const task = sqlite.prepare(
     `SELECT id, title, status, temperature, version, planned_date plannedDate,
-      deadline_at deadline, completed_at completedAt, deleted_at deletedAt
+      deadline_at deadline, starts_at startAt, ends_at endAt, goal_id goalId,
+      parent_task_id parentTaskId, repeat_template_id repeatTemplateId,
+      carry_over_from carryOverFrom, completed_at completedAt, deleted_at deletedAt
      FROM tasks WHERE workspace_id = ? AND id = ?`,
   ).get(workspaceId, taskId) as Record<string, unknown> | undefined;
   if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -100,13 +136,28 @@ export function inspectTaskTimeline(database: LifeOSDatabase, taskId: string) {
       actor_type actorType, before_json beforeJson, after_json afterJson, created_at createdAt
      FROM events WHERE workspace_id = ? AND (
        (aggregate_type = 'task' AND aggregate_id = ?) OR
+       (aggregate_type = 'task_dependency' AND aggregate_id IN (
+         SELECT id FROM task_dependencies WHERE workspace_id = ? AND (predecessor_id = ? OR successor_id = ?)
+       )) OR
        (aggregate_type = 'card' AND aggregate_id IN (SELECT id FROM cards WHERE workspace_id = ? AND task_id = ?)) OR
        (aggregate_type = 'conversation' AND aggregate_id IN (
          SELECT c.id FROM conversations c JOIN cards ca ON ca.id = c.card_id WHERE c.workspace_id = ? AND ca.task_id = ?
        )) OR
        (aggregate_type = 'ai_run' AND aggregate_id IN (SELECT ai_run_id FROM cards WHERE workspace_id = ? AND task_id = ? AND ai_run_id IS NOT NULL))
      ) ORDER BY created_at, id`,
-  ).all(workspaceId, taskId, workspaceId, taskId, workspaceId, taskId, workspaceId, taskId) as TimelineEventRow[];
+  ).all(
+    workspaceId,
+    taskId,
+    workspaceId,
+    taskId,
+    taskId,
+    workspaceId,
+    taskId,
+    workspaceId,
+    taskId,
+    workspaceId,
+    taskId,
+  ) as TimelineEventRow[];
   const messages = sqlite.prepare(
     `SELECT m.id, m.role, m.content, m.created_at createdAt, m.conversation_id conversationId
      FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN cards ca ON ca.id = c.card_id

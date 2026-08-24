@@ -1,4 +1,10 @@
-import { errorMessage, hasFlag, openExistingDatabase, printHeading } from '../lib.js';
+import {
+  errorMessage,
+  hasFlag,
+  openExistingDatabase,
+  printHeading,
+  TASK_IMAGES_MIGRATION_HINT,
+} from '../lib.js';
 import { resetAll, workspaceCounts, type StateCounts } from './operations.js';
 
 function printCounts(label: string, counts: StateCounts): void {
@@ -11,7 +17,8 @@ function main(): void {
   try {
     printHeading('LifeOS full reset', filename);
     const before = workspaceCounts(database.sqlite);
-    printCounts('Current records', before);
+    printCounts('Records scheduled for deletion/reset', before);
+    if (!before.taskImagesAvailable) console.warn(TASK_IMAGES_MIGRATION_HINT);
 
     if (!hasFlag('--confirm')) {
       console.log('Preview only. Nothing was deleted.');
@@ -21,6 +28,13 @@ function main(): void {
 
     const after = resetAll(database);
     printCounts('Records after reset', after);
+    console.table({
+      removedTaskImages: before.taskImages,
+      removedTaskImageBytes: before.taskImageBytes,
+    });
+    if (before.taskImagesAvailable) {
+      console.log('Task images were removed by the task foreign-key cascade.');
+    }
     console.log('Reset complete. Workspace/user/schema were preserved; three default rules were restored.');
   } finally {
     database.close();

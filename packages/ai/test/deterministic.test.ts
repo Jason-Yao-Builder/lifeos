@@ -18,6 +18,12 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
     plannedDate: null,
     startAt: null,
     endAt: null,
+    goalId: null,
+    repeatTemplateId: null,
+    parentTaskId: null,
+    plannedStartTime: null,
+    plannedEndTime: null,
+    carryOverFrom: null,
     estimatedMinutes: 30,
     actualMinutes: 0,
     scoreDimensions: null,
@@ -35,12 +41,12 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 describe('deterministic AI', () => {
   const ai = createDeterministicAI({ now: () => now });
 
-  it('uses the domain score formula and treats effort as cost', () => {
+  it('uses the three-dimensional domain score while retaining effort metadata', () => {
     const short = ai.scoreTask(task({ id: 'short', estimatedMinutes: 30 }));
     const long = ai.scoreTask(task({ id: 'long', estimatedMinutes: 300 }));
     const urgent = ai.scoreTask(task({ id: 'urgent', deadline: '2026-08-24T08:00:00.000Z' }));
     expect(short.dimensions.effort).toBeLessThan(long.dimensions.effort);
-    expect(short.score).toBeGreaterThan(long.score);
+    expect(short.score).toBe(long.score);
     expect(urgent.score).toBeGreaterThan(short.score);
     expect(short.explanation).toContain('effort');
   });
@@ -56,7 +62,7 @@ describe('deterministic AI', () => {
     expect(result.focusTaskIds).toContain('overdue');
     expect(result.focusTaskIds).not.toContain('hot');
     expect(result.focusTaskIds).not.toContain('cold');
-    expect(result.explanation).toContain('四维评分');
+    expect(result.explanation).toContain('三维评分');
   });
 
   it('uses persisted dimensions for summaries and coaching', () => {

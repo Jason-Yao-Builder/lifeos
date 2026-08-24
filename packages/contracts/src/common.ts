@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const EntityIdSchema = z.string().trim().min(1).max(128);
 export const DateTimeSchema = z.string().datetime({ offset: true });
+export const LocalTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Invalid local time');
 
 const LOCAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -18,3 +19,4 @@ export const LocalDateSchema = z.string().regex(LOCAL_DATE_PATTERN).refine((valu
 }, 'Invalid calendar date');
 
 export type LocalDate = z.infer<typeof LocalDateSchema>;
+export type LocalTime = z.infer<typeof LocalTimeSchema>;

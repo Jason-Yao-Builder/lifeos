@@ -3,19 +3,24 @@ import {
   TaskScoreWeightsSchema,
   type TaskScoreDimensions,
   type TaskScoreWeights,
+  type TaskScoreWeightsInput,
 } from '@lifeos/contracts';
 
 export const DEFAULT_SCORE_WEIGHTS: Readonly<TaskScoreWeights> = {
-  impact: 0.35,
-  urgency: 0.3,
+  impact: 0.4,
+  urgency: 0.35,
   alignment: 0.25,
-  effort: 0.1,
 };
+
+export type TaskScoreContributions = Pick<
+  TaskScoreDimensions,
+  'impact' | 'urgency' | 'alignment'
+>;
 
 export interface TaskScoreResult {
   score: number;
   normalizedWeights: TaskScoreWeights;
-  contributions: TaskScoreDimensions;
+  contributions: TaskScoreContributions;
 }
 
 function round(value: number, digits: number): number {
@@ -25,7 +30,7 @@ function round(value: number, digits: number): number {
 
 export function calculateTaskScore(
   input: TaskScoreDimensions,
-  weights: TaskScoreWeights = DEFAULT_SCORE_WEIGHTS,
+  weights: TaskScoreWeightsInput = DEFAULT_SCORE_WEIGHTS,
 ): TaskScoreResult {
   const dimensions = TaskScoreDimensionsSchema.parse(input);
   const validWeights = TaskScoreWeightsSchema.parse(weights);
@@ -34,13 +39,11 @@ export function calculateTaskScore(
     impact: round(validWeights.impact / totalWeight, 8),
     urgency: round(validWeights.urgency / totalWeight, 8),
     alignment: round(validWeights.alignment / totalWeight, 8),
-    effort: round(validWeights.effort / totalWeight, 8),
   };
-  const contributions: TaskScoreDimensions = {
+  const contributions: TaskScoreContributions = {
     impact: round(dimensions.impact * normalizedWeights.impact, 4),
     urgency: round(dimensions.urgency * normalizedWeights.urgency, 4),
     alignment: round(dimensions.alignment * normalizedWeights.alignment, 4),
-    effort: round((100 - dimensions.effort) * normalizedWeights.effort, 4),
   };
   const score = round(Object.values(contributions).reduce((sum, value) => sum + value, 0), 2);
 

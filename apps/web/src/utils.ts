@@ -50,11 +50,15 @@ export function openDatePicker(input: HTMLInputElement): void {
 
 export function calculateCompositeScore(dimensions: TaskScoreDimensions): number {
   const score =
-    dimensions.impact * 0.35 +
-    dimensions.urgency * 0.3 +
-    dimensions.alignment * 0.25 +
-    (100 - dimensions.effort) * 0.1;
+    dimensions.impact * 0.4 +
+    dimensions.urgency * 0.35 +
+    dimensions.alignment * 0.25;
   return Math.round((score + Number.EPSILON) * 100) / 100;
+}
+
+export function clampScoreDimension(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
 }
 
 export function mergeTags(current: string[], raw: string): string[] {
@@ -64,6 +68,10 @@ export function mergeTags(current: string[], raw: string): string[] {
     if (tag && !next.includes(tag) && next.length < 50) next.push(tag);
   }
   return next;
+}
+
+export function shouldCommitTagKey(key: string, isComposing: boolean): boolean {
+  return !isComposing && ["Enter", ",", "，"].includes(key);
 }
 
 export function formatLongDate(value = new Date()): string {

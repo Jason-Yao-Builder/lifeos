@@ -1,10 +1,17 @@
-import type { TaskScoreDimensions } from '@lifeos/contracts';
+import type {
+  TaskImageMetadata,
+  TaskImageMimeType,
+  TaskScoreDimensions,
+} from '@lifeos/contracts';
 import type {
   actorTypes,
   aiRunStatuses,
   cardStatuses,
   cardTypes,
+  dependencyTypes,
+  goalStatuses,
   messageRoles,
+  reviewTypes,
   taskStatuses,
   temperatures,
 } from './schema.js';
@@ -20,6 +27,9 @@ export type CardType = (typeof cardTypes)[number];
 export type CardStatus = (typeof cardStatuses)[number];
 export type MessageRole = (typeof messageRoles)[number];
 export type AiRunStatus = (typeof aiRunStatuses)[number];
+export type GoalStatus = (typeof goalStatuses)[number];
+export type DependencyType = (typeof dependencyTypes)[number];
+export type ReviewType = (typeof reviewTypes)[number];
 
 export interface ActorInput {
   type: ActorType;
@@ -41,6 +51,12 @@ export interface TaskRecord {
   endAt: string | null;
   estimatedMinutes: number | null;
   actualMinutes: number;
+  parentTaskId: string | null;
+  goalId: string | null;
+  repeatTemplateId: string | null;
+  plannedStartTime: string | null;
+  plannedEndTime: string | null;
+  carryOverFrom: string | null;
   tags: string[];
   scoreDimensions: TaskScoreDimensions | null;
   score: number | null;
@@ -50,6 +66,20 @@ export interface TaskRecord {
   updatedAt: string;
   completedAt: string | null;
   deletedAt: string | null;
+}
+
+export interface CreateTaskImageInput {
+  id?: string;
+  tenantId?: string;
+  taskId: string;
+  fileName: string;
+  mimeType: TaskImageMimeType;
+  data: Buffer;
+}
+
+export interface TaskImageContentRecord {
+  metadata: TaskImageMetadata;
+  data: Buffer;
 }
 
 export interface CreateTaskInput {
@@ -67,6 +97,11 @@ export interface CreateTaskInput {
   estimatedMinutes?: number | null;
   actualMinutes?: number | null;
   parentTaskId?: string | null;
+  goalId?: string | null;
+  repeatTemplateId?: string | null;
+  plannedStartTime?: string | null;
+  plannedEndTime?: string | null;
+  carryOverFrom?: string | null;
   tags?: string[];
   scoreDimensions?: TaskScoreDimensions | null;
   score?: number | null;
@@ -87,6 +122,11 @@ export type UpdateTaskPatch = Partial<
     | 'estimatedMinutes'
     | 'actualMinutes'
     | 'parentTaskId'
+    | 'goalId'
+    | 'repeatTemplateId'
+    | 'plannedStartTime'
+    | 'plannedEndTime'
+    | 'carryOverFrom'
     | 'tags'
     | 'scoreDimensions'
     | 'score'
@@ -102,8 +142,188 @@ export interface TaskListFilters {
   query?: string;
   deadlineFrom?: string;
   deadlineTo?: string;
+  goalId?: string;
+  parentTaskId?: string | null;
+  repeatTemplateId?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface DateRangeFilters {
+  tenantId?: string;
+  start: string;
+  end: string;
+  goalId?: string;
+}
+
+export interface TaskProgress {
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export interface GoalRecord {
+  id: string;
+  workspaceId: string;
+  ownerId: string;
+  title: string;
+  description: string | null;
+  timeframe: string | null;
+  status: GoalStatus;
+  rank: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  deletedAt: string | null;
+}
+
+export interface CreateGoalInput {
+  id?: string;
+  tenantId?: string;
+  ownerId?: string;
+  title: string;
+  description?: string | null;
+  timeframe?: string | null;
+  status?: GoalStatus;
+  rank?: number;
+}
+
+export type UpdateGoalPatch = Partial<
+  Pick<CreateGoalInput, 'title' | 'description' | 'timeframe' | 'status' | 'rank'>
+>;
+
+export interface GoalListFilters {
+  tenantId?: string;
+  status?: GoalStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface GoalProgress extends TaskProgress {
+  byTemperature: Record<Temperature, number>;
+}
+
+export interface TaskDependencyRecord {
+  id: string;
+  workspaceId: string;
+  predecessorId: string;
+  successorId: string;
+  type: DependencyType;
+  createdAt: string;
+}
+
+export interface CreateTaskDependencyInput {
+  id?: string;
+  tenantId?: string;
+  predecessorId: string;
+  successorId: string;
+  type?: DependencyType;
+}
+
+export interface TaskDependencies {
+  predecessors: TaskDependencyRecord[];
+  successors: TaskDependencyRecord[];
+  isBlocked: boolean;
+}
+
+export interface RepeatTemplateRecord {
+  id: string;
+  workspaceId: string;
+  ownerId: string;
+  title: string;
+  description: string | null;
+  temperature: Temperature;
+  tags: string[];
+  estimatedMinutes: number | null;
+  goalId: string | null;
+  cronExpr: string;
+  timezone: string;
+  horizonDays: number;
+  enabled: boolean;
+  lastGenerated: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface CreateRepeatTemplateInput {
+  id?: string;
+  tenantId?: string;
+  ownerId?: string;
+  title: string;
+  description?: string | null;
+  temperature?: Temperature;
+  tags?: string[];
+  estimatedMinutes?: number | null;
+  goalId?: string | null;
+  cronExpr: string;
+  timezone?: string;
+  horizonDays?: number;
+  enabled?: boolean;
+}
+
+export type UpdateRepeatTemplatePatch = Partial<
+  Pick<
+    CreateRepeatTemplateInput,
+    | 'title'
+    | 'description'
+    | 'temperature'
+    | 'tags'
+    | 'estimatedMinutes'
+    | 'goalId'
+    | 'cronExpr'
+    | 'timezone'
+    | 'horizonDays'
+    | 'enabled'
+  >
+>;
+
+export interface RepeatTemplateListFilters {
+  tenantId?: string;
+  enabled?: boolean;
+  goalId?: string;
+  limit?: number;
+}
+
+export interface RepeatGenerationOptions {
+  throughDate?: string;
+}
+
+export interface RepeatGenerationResult {
+  templateId: string;
+  dates: string[];
+  tasks: TaskRecord[];
+  lastGenerated: string | null;
+}
+
+export interface ReviewCardRecord {
+  id: string;
+  workspaceId: string;
+  ownerId: string;
+  type: ReviewType;
+  periodStart: string;
+  periodEnd: string;
+  content: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateReviewCardInput {
+  id?: string;
+  tenantId?: string;
+  ownerId?: string;
+  type: ReviewType;
+  periodStart: string;
+  periodEnd: string;
+  content: unknown;
+}
+
+export interface ReviewCardListFilters {
+  tenantId?: string;
+  type?: ReviewType;
+  periodFrom?: string;
+  periodTo?: string;
+  limit?: number;
 }
 
 export interface EventRecord {

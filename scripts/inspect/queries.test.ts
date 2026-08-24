@@ -7,13 +7,41 @@ describe('maintenance inspection queries', () => {
     const database = createDatabase({ filename: ':memory:' });
     try {
       const task = database.store.tasks.create({ title: 'inspect me', temperature: 'hot' });
+      const goal = database.store.goals.create({ title: 'inspect goal' });
+      const template = database.store.repeatTemplates.create({
+        title: 'inspect repeat',
+        cronExpr: '0 9 * * 1-5',
+      });
+      database.store.reviews.create({
+        type: 'daily_plan',
+        periodStart: '2026-08-23',
+        periodEnd: '2026-08-23',
+        content: { plannedTasks: [], carryoverDecisions: [] },
+      });
+      database.store.taskImages.create({
+        taskId: task.id,
+        fileName: 'inspect.png',
+        mimeType: 'image/png',
+        data: Buffer.alloc(12, 1),
+      });
       database.store.tasks.softDelete(DEFAULT_TENANT_ID, task.id, task.version);
 
       const state = inspectState(database, 10);
       expect(state.tasks).toMatchObject({ total: 1, active: 0, softDeleted: 1 });
       expect(state.tasks.byStatus).toEqual({ archived: 1 });
-      expect(state.events.total).toBe(2);
-      expect(state.events.recent).toHaveLength(2);
+      expect(state.taskImages).toEqual({
+        available: true,
+        count: 1,
+        totalBytes: 12,
+        migrationHint: null,
+      });
+      expect(state.events.total).toBe(6);
+      expect(state.events.recent).toHaveLength(6);
+      expect(state.goals).toMatchObject({ total: 1, active: 1, byStatus: { active: 1 } });
+      expect(state.repeatTemplates).toMatchObject({ total: 1, enabled: 1 });
+      expect(state.reviews).toMatchObject({ total: 1, byType: { daily_plan: 1 } });
+      expect(goal.id).toBeTruthy();
+      expect(template.id).toBeTruthy();
       expect(() => JSON.stringify(state)).not.toThrow();
     } finally {
       database.close();
@@ -28,6 +56,8 @@ describe('maintenance inspection queries', () => {
     });
     try {
       const task = database.store.tasks.create({ title: 'timeline' });
+      const predecessor = database.store.tasks.create({ title: 'predecessor' });
+      database.store.dependencies.create({ predecessorId: predecessor.id, successorId: task.id });
       database.store.tasks.update(DEFAULT_TENANT_ID, task.id, task.version, { status: 'in_progress' });
       const run = database.store.aiRuns.start({ purpose: 'score', provider: 'fake', model: 'fake' });
       const card = database.store.cards.create({ type: 'observation', title: 'coach', body: 'body', targetTaskId: task.id, aiRunId: run.id });
@@ -37,6 +67,7 @@ describe('maintenance inspection queries', () => {
       const timeline = inspectTaskTimeline(database, task.id);
       expect(timeline.events.map((event) => event.type)).toEqual([
         'task.created',
+        'task_dependency.created',
         'task.updated',
         'ai_run.started',
         'card.created',
@@ -44,8 +75,30 @@ describe('maintenance inspection queries', () => {
         'conversation.created',
         'message.created',
       ]);
-      expect(timeline.events[1]?.change).toContain('status: todo → in_progress');
+      expect(timeline.events[2]?.change).toContain('status: todo → in_progress');
       expect(timeline.messages).toMatchObject([{ role: 'user', content: 'why?' }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('reports a migration hint for a legacy database without creating task_images', () => {
+    const database = createDatabase({ filename: ':memory:' });
+    try {
+      database.sqlite.exec('DROP TABLE task_images');
+      const state = inspectState(database, 10);
+
+      expect(state.taskImages).toMatchObject({
+        available: false,
+        count: 0,
+        totalBytes: 0,
+      });
+      expect(state.taskImages.migrationHint).toContain('pnpm db:migrate');
+      expect(
+        database.sqlite
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_images'")
+          .get(),
+      ).toBeUndefined();
     } finally {
       database.close();
     }

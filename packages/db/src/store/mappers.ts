@@ -1,13 +1,29 @@
 import type { TaskScoreDimensions } from '@lifeos/contracts';
-import type { aiRuns, cards, conversations, events, messages, rules, tasks } from '../schema.js';
+import type {
+  aiRuns,
+  cards,
+  conversations,
+  events,
+  goals,
+  messages,
+  repeatTemplates,
+  reviewCards,
+  rules,
+  taskDependencies,
+  tasks,
+} from '../schema.js';
 import { decodeJson, decodeStringArray } from '../json.js';
 import type {
   AiRunRecord,
   CardRecord,
   ConversationRecord,
   EventRecord,
+  GoalRecord,
   MessageRecord,
+  RepeatTemplateRecord,
+  ReviewCardRecord,
   RuleRecord,
+  TaskDependencyRecord,
   TaskRecord,
 } from '../types.js';
 
@@ -25,6 +41,12 @@ export const mapTask = (row: typeof tasks.$inferSelect): TaskRecord => ({
   endAt: row.endsAt,
   estimatedMinutes: row.estimatedMinutes,
   actualMinutes: row.actualMinutes,
+  parentTaskId: row.parentTaskId,
+  goalId: row.goalId,
+  repeatTemplateId: row.repeatTemplateId,
+  plannedStartTime: row.plannedStartTime,
+  plannedEndTime: row.plannedEndTime,
+  carryOverFrom: row.carryOverFrom,
   tags: decodeStringArray(row.tagsJson),
   scoreDimensions: decodeJson(row.scoreDimensionsJson) as TaskScoreDimensions | null,
   score: row.score,
@@ -34,6 +56,68 @@ export const mapTask = (row: typeof tasks.$inferSelect): TaskRecord => ({
   updatedAt: row.updatedAt,
   completedAt: row.completedAt,
   deletedAt: row.deletedAt,
+});
+
+export const mapGoal = (row: typeof goals.$inferSelect): GoalRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  ownerId: row.ownerId,
+  title: row.title,
+  description: row.description,
+  timeframe: row.timeframe,
+  status: row.status,
+  rank: row.rank,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  completedAt: row.completedAt,
+  deletedAt: row.deletedAt,
+});
+
+export const mapTaskDependency = (
+  row: typeof taskDependencies.$inferSelect,
+): TaskDependencyRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  predecessorId: row.predecessorId,
+  successorId: row.successorId,
+  type: row.type,
+  createdAt: row.createdAt,
+});
+
+export const mapRepeatTemplate = (
+  row: typeof repeatTemplates.$inferSelect,
+): RepeatTemplateRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  ownerId: row.ownerId,
+  title: row.title,
+  description: row.description,
+  temperature: row.temperature,
+  tags: decodeStringArray(row.tagsJson),
+  estimatedMinutes: row.estimatedMinutes,
+  goalId: row.goalId,
+  cronExpr: row.cronExpr,
+  timezone: row.timezone,
+  horizonDays: row.horizonDays,
+  enabled: row.enabled,
+  lastGenerated: row.lastGenerated,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  deletedAt: row.deletedAt,
+});
+
+export const mapReviewCard = (
+  row: typeof reviewCards.$inferSelect,
+): ReviewCardRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  ownerId: row.ownerId,
+  type: row.type,
+  periodStart: row.periodStart,
+  periodEnd: row.periodEnd,
+  content: decodeJson(row.contentJson),
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
 });
 
 export const mapEvent = (row: typeof events.$inferSelect): EventRecord => ({

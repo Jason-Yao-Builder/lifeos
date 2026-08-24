@@ -15,7 +15,14 @@ export function dayRoutes(
         tenantId: dependencies.tenantId,
         limit: 500,
       });
-      return { items: selectTodayTasks(tasks, { today: date, timeZone }).map(projectTask) };
+      return {
+        items: selectTodayTasks(tasks, { today: date, timeZone }).map((task) =>
+          projectTask(
+            task,
+            dependencies.store.dependencies.isBlocked(dependencies.tenantId, task.id),
+          ),
+        ),
+      };
     });
   };
   return plugin;

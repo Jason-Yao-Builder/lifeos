@@ -24,7 +24,7 @@ export function createDeterministicAI(options: DeterministicAIOptions = {}): Det
           taskId: task.id,
           dimensions: task.scoreDimensions,
           score: task.score,
-          explanation: '采用任务已保存的四维评分。',
+          explanation: '采用任务已保存的三维评分；effort 仅作为元数据保留。',
         }
       : scoreOne(task);
 
@@ -62,7 +62,7 @@ export function createDeterministicAI(options: DeterministicAIOptions = {}): Det
         body: `${observations.join('')}\n${focusText}`,
         focusTaskIds: focus.map(({ task }) => task.id),
         observations,
-        explanation: '候选取今日计划、当天到期和已逾期硬任务，再按透明的四维评分选前三项。',
+        explanation: '候选取今日计划、当天到期和已逾期硬任务，再按透明的三维评分选前三项。',
       };
     },
     reply(input: ChatReplyInput): ChatReplyResult {

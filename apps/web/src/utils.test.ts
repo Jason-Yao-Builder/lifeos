@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { calculateCompositeScore, mergeTags, openDatePicker } from "./utils";
+import {
+  calculateCompositeScore,
+  clampScoreDimension,
+  mergeTags,
+  openDatePicker,
+  shouldCommitTagKey,
+} from "./utils";
 
 describe("mergeTags", () => {
   it("keeps existing tags while adding comma-separated values", () => {
@@ -21,11 +27,27 @@ describe("mergeTags", () => {
     expect(result).toHaveLength(50);
     expect(result[49]).toHaveLength(50);
   });
+
+  it("commits delimiter keys without treating IME confirmation as a tag submission", () => {
+    expect(shouldCommitTagKey("Enter", false)).toBe(true);
+    expect(shouldCommitTagKey(",", false)).toBe(true);
+    expect(shouldCommitTagKey("，", false)).toBe(true);
+    expect(shouldCommitTagKey("Enter", true)).toBe(false);
+    expect(shouldCommitTagKey("a", false)).toBe(false);
+  });
 });
 
 describe("priority scoring", () => {
-  it("uses effort as a cost when previewing a manual score", () => {
-    expect(calculateCompositeScore({ impact: 80, urgency: 60, alignment: 90, effort: 40 })).toBe(74.5);
+  it("uses the frozen three-dimension weights and keeps effort as metadata", () => {
+    expect(calculateCompositeScore({ impact: 80, urgency: 60, alignment: 90, effort: 40 })).toBe(75.5);
+    expect(calculateCompositeScore({ impact: 80, urgency: 60, alignment: 90, effort: 100 })).toBe(75.5);
+  });
+
+  it("normalizes manual dimension input to the API range", () => {
+    expect(clampScoreDimension(-1)).toBe(0);
+    expect(clampScoreDimension(42.5)).toBe(42.5);
+    expect(clampScoreDimension(101)).toBe(100);
+    expect(clampScoreDimension(Number.NaN)).toBe(0);
   });
 });
 

@@ -18,11 +18,19 @@ function main(): void {
       cards: state.cards.total,
       conversations: state.conversations,
       messages: state.messages,
+      taskImages: state.taskImages.count,
+      taskImageBytes: state.taskImages.totalBytes,
       aiRuns: state.aiRuns.total,
       rules: state.rules.total,
       enabledRules: state.rules.enabled,
+      goals: state.goals.total,
+      dependencies: state.dependencies,
+      repeatTemplates: state.repeatTemplates.total,
+      enabledRepeatTemplates: state.repeatTemplates.enabled,
+      reviews: state.reviews.total,
       events: state.events.total,
     });
+    if (!state.taskImages.available) console.warn(state.taskImages.migrationHint);
     console.log('Tasks by status');
     console.table(state.tasks.byStatus);
     console.log('Tasks by temperature');

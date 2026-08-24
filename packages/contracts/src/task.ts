@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DateTimeSchema, EntityIdSchema, LocalDateSchema } from './common.js';
+import { DateTimeSchema, EntityIdSchema, LocalDateSchema, LocalTimeSchema } from './common.js';
 import { HardnessSchema, TaskStatusSchema, TemperatureSchema } from './enums.js';
 
 const TagSchema = z.string().trim().min(1).max(50);
@@ -18,17 +18,26 @@ export const TaskScoreDimensionsSchema = z
   .strict();
 export type TaskScoreDimensions = z.infer<typeof TaskScoreDimensionsSchema>;
 
-export const TaskScoreWeightsSchema = z
+const CurrentTaskScoreWeightsSchema = z
   .object({
     impact: z.number().nonnegative(),
     urgency: z.number().nonnegative(),
     alignment: z.number().nonnegative(),
-    effort: z.number().nonnegative(),
   })
+  .strict();
+
+const LegacyTaskScoreWeightsSchema = CurrentTaskScoreWeightsSchema.extend({
+  effort: z.number().nonnegative(),
+})
   .strict()
+  .transform(({ impact, urgency, alignment }) => ({ impact, urgency, alignment }));
+
+export const TaskScoreWeightsSchema = z
+  .union([CurrentTaskScoreWeightsSchema, LegacyTaskScoreWeightsSchema])
   .refine((weights) => Object.values(weights).some((weight) => weight > 0), {
     message: 'At least one score weight must be positive',
   });
+export type TaskScoreWeightsInput = z.input<typeof TaskScoreWeightsSchema>;
 export type TaskScoreWeights = z.infer<typeof TaskScoreWeightsSchema>;
 
 const WritableTaskFieldsSchema = z
@@ -43,6 +52,12 @@ const WritableTaskFieldsSchema = z
     startAt: DateTimeSchema.nullable(),
     endAt: DateTimeSchema.nullable(),
     estimatedMinutes: z.number().int().positive().max(525_600).nullable(),
+    goalId: EntityIdSchema.nullable(),
+    repeatTemplateId: EntityIdSchema.nullable(),
+    parentTaskId: EntityIdSchema.nullable(),
+    plannedStartTime: LocalTimeSchema.nullable(),
+    plannedEndTime: LocalTimeSchema.nullable(),
+    carryOverFrom: LocalDateSchema.nullable(),
   })
   .strict();
 
@@ -56,12 +71,29 @@ export const CreateTaskInputSchema = WritableTaskFieldsSchema.extend({
   startAt: WritableTaskFieldsSchema.shape.startAt.default(null),
   endAt: WritableTaskFieldsSchema.shape.endAt.default(null),
   estimatedMinutes: WritableTaskFieldsSchema.shape.estimatedMinutes.default(null),
+  goalId: WritableTaskFieldsSchema.shape.goalId.default(null),
+  repeatTemplateId: WritableTaskFieldsSchema.shape.repeatTemplateId.default(null),
+  parentTaskId: WritableTaskFieldsSchema.shape.parentTaskId.default(null),
+  plannedStartTime: WritableTaskFieldsSchema.shape.plannedStartTime.default(null),
+  plannedEndTime: WritableTaskFieldsSchema.shape.plannedEndTime.default(null),
+  carryOverFrom: WritableTaskFieldsSchema.shape.carryOverFrom.default(null),
   scoreDimensions: TaskScoreDimensionsSchema.nullable().default(null),
 }).strict();
 export type CreateTaskRequest = z.input<typeof CreateTaskInputSchema>;
 export type CreateTaskInput = z.output<typeof CreateTaskInputSchema>;
 
+export const CreateSubtaskInputSchema = CreateTaskInputSchema.omit({
+  status: true,
+  tags: true,
+  parentTaskId: true,
+}).strict();
+export type CreateSubtaskRequest = z.input<typeof CreateSubtaskInputSchema>;
+export type CreateSubtaskInput = z.output<typeof CreateSubtaskInputSchema>;
+
 export const UpdateTaskInputSchema = WritableTaskFieldsSchema.partial()
+  .extend({
+    scoreDimensions: TaskScoreDimensionsSchema.optional(),
+  })
   .strict()
   .refine((input) => Object.keys(input).length > 0, 'At least one field is required');
 export type UpdateTaskInput = z.infer<typeof UpdateTaskInputSchema>;
@@ -82,5 +114,8 @@ export const TaskRecordSchema = WritableTaskFieldsSchema.extend({
 }).strict();
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;
 
-export const TaskDtoSchema = TaskRecordSchema.extend({ hardness: HardnessSchema }).strict();
+export const TaskDtoSchema = TaskRecordSchema.extend({
+  hardness: HardnessSchema,
+  isBlocked: z.boolean(),
+}).strict();
 export type TaskDto = z.infer<typeof TaskDtoSchema>;

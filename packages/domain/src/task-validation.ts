@@ -12,25 +12,37 @@ export type ValidationResult<T> =
   | { success: true; data: T }
   | { success: false; issues: readonly DomainIssue[] };
 
-type TemporalFields = Pick<TaskRecord, 'startAt' | 'endAt' | 'deadline'>;
+type TemporalFields = Pick<TaskRecord, 'startAt' | 'endAt' | 'deadline'> &
+  Partial<Pick<TaskRecord, 'plannedStartTime' | 'plannedEndTime'>>;
 
 function temporalIssues(fields: TemporalFields): DomainIssue[] {
-  if (!fields.startAt) return [];
-
   const issues: DomainIssue[] = [];
-  const start = Date.parse(fields.startAt);
-  if (fields.endAt && start > Date.parse(fields.endAt)) {
-    issues.push({
-      path: 'endAt',
-      code: 'INVALID_TIME_RANGE',
-      message: 'endAt must be at or after startAt',
-    });
+  if (fields.startAt) {
+    const start = Date.parse(fields.startAt);
+    if (fields.endAt && start > Date.parse(fields.endAt)) {
+      issues.push({
+        path: 'endAt',
+        code: 'INVALID_TIME_RANGE',
+        message: 'endAt must be at or after startAt',
+      });
+    }
+    if (fields.deadline && start > Date.parse(fields.deadline)) {
+      issues.push({
+        path: 'deadline',
+        code: 'INVALID_TIME_RANGE',
+        message: 'deadline must be at or after startAt',
+      });
+    }
   }
-  if (fields.deadline && start > Date.parse(fields.deadline)) {
+  if (
+    fields.plannedStartTime &&
+    fields.plannedEndTime &&
+    fields.plannedStartTime > fields.plannedEndTime
+  ) {
     issues.push({
-      path: 'deadline',
+      path: 'plannedEndTime',
       code: 'INVALID_TIME_RANGE',
-      message: 'deadline must be at or after startAt',
+      message: 'plannedEndTime must be at or after plannedStartTime',
     });
   }
   return issues;
@@ -74,6 +86,14 @@ export function validateUpdateTaskInput(
     endAt: 'endAt' in parsed.data ? (parsed.data.endAt ?? null) : (current?.endAt ?? null),
     deadline:
       'deadline' in parsed.data ? (parsed.data.deadline ?? null) : (current?.deadline ?? null),
+    plannedStartTime:
+      'plannedStartTime' in parsed.data
+        ? (parsed.data.plannedStartTime ?? null)
+        : (current?.plannedStartTime ?? null),
+    plannedEndTime:
+      'plannedEndTime' in parsed.data
+        ? (parsed.data.plannedEndTime ?? null)
+        : (current?.plannedEndTime ?? null),
   };
   const issues = temporalIssues(temporal);
   return issues.length > 0

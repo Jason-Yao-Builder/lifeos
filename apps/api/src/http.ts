@@ -2,8 +2,10 @@ import {
   ApiErrorSchema,
   TaskDtoSchema,
   TaskRecordSchema,
+  TaskScoreDimensionsSchema,
   type TaskDto,
   type TaskRecord,
+  type TaskScoreDimensions,
 } from '@lifeos/contracts';
 import { DomainValidationError, InvalidTransitionError, getTaskHardness } from '@lifeos/domain';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -22,9 +24,9 @@ export function omitUndefined<T extends object>(value: T): {
   };
 }
 
-export function projectTask(value: unknown): TaskDto {
+export function projectTask(value: unknown, isBlocked = false): TaskDto {
   const task = TaskRecordSchema.parse(value);
-  return TaskDtoSchema.parse({ ...task, hardness: getTaskHardness(task) });
+  return TaskDtoSchema.parse({ ...task, hardness: getTaskHardness(task), isBlocked });
 }
 
 export function taskWasManuallyScored(
@@ -32,16 +34,33 @@ export function taskWasManuallyScored(
   tenantId: string,
   taskId: string,
 ): boolean {
-  const created = store.tasks
-    .events(tenantId, taskId)
-    .find((event) => event.type === 'task.created');
-  const after = created?.after;
-  return Boolean(
-    after &&
-    typeof after === 'object' &&
-    !Array.isArray(after) &&
-    (after as Record<string, unknown>).scoreDimensions != null,
+  return store.tasks.events(tenantId, taskId).some((event) => {
+    if (event.actorType !== 'human') return false;
+    const after = scoreDimensionsFrom(event.after);
+    if (!after) return false;
+    if (event.type === 'task.created') return true;
+    if (event.type !== 'task.updated') return false;
+    return !sameScoreDimensions(scoreDimensionsFrom(event.before), after);
+  });
+}
+
+function scoreDimensionsFrom(value: unknown): TaskScoreDimensions | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const parsed = TaskScoreDimensionsSchema.safeParse(
+    (value as Record<string, unknown>).scoreDimensions,
   );
+  return parsed.success ? parsed.data : null;
+}
+
+function sameScoreDimensions(
+  left: TaskScoreDimensions | null,
+  right: TaskScoreDimensions,
+): boolean {
+  return left !== null &&
+    left.impact === right.impact &&
+    left.urgency === right.urgency &&
+    left.alignment === right.alignment &&
+    left.effort === right.effort;
 }
 
 export function tasksForAiContext(
@@ -110,8 +129,14 @@ function classifyError(error: unknown): {
   if (candidate.code === 'NOT_FOUND' || candidate.statusCode === 404) {
     return { status: 404, code: 'NOT_FOUND', message: candidate.message ?? 'Resource not found' };
   }
+  if (candidate.statusCode === 413) {
+    return { status: 413, code: 'VALIDATION_ERROR', message: 'Request body too large' };
+  }
   if (candidate.code === 'VERSION_CONFLICT') {
     return { status: 409, code: 'CONFLICT', message: candidate.message ?? 'Version conflict' };
+  }
+  if (candidate.code === 'DEPENDENCY_CYCLE') {
+    return { status: 409, code: 'CONFLICT', message: candidate.message ?? 'Circular dependency' };
   }
   if (candidate.code === 'AI_RUN_IN_PROGRESS') {
     return { status: 409, code: 'CONFLICT', message: 'AI_RUN_IN_PROGRESS' };

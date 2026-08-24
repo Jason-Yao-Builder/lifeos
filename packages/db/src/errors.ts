@@ -24,3 +24,12 @@ export class InvalidMutationError extends Error {
     this.name = 'InvalidMutationError';
   }
 }
+
+export class DependencyCycleError extends Error {
+  readonly code = 'DEPENDENCY_CYCLE';
+
+  constructor(predecessorId: string, successorId: string) {
+    super(`Dependency would create a cycle: ${predecessorId} -> ${successorId}`);
+    this.name = 'DependencyCycleError';
+  }
+}

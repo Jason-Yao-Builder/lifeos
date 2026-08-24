@@ -8,14 +8,17 @@ import {
 } from './index.js';
 
 describe('deterministic task scoring', () => {
-  it('uses effort as a cost and returns reproducible contributions', () => {
+  it('uses the frozen three-dimensional weights and keeps effort as metadata', () => {
     const result = calculateTaskScore({ impact: 80, urgency: 60, alignment: 100, effort: 20 });
 
     expect(result).toEqual({
-      score: 79,
-      normalizedWeights: { impact: 0.35, urgency: 0.3, alignment: 0.25, effort: 0.1 },
-      contributions: { impact: 28, urgency: 18, alignment: 25, effort: 8 },
+      score: 78,
+      normalizedWeights: { impact: 0.4, urgency: 0.35, alignment: 0.25 },
+      contributions: { impact: 32, urgency: 21, alignment: 25 },
     });
+    expect(
+      calculateTaskScore({ impact: 80, urgency: 60, alignment: 100, effort: 100 }).score,
+    ).toBe(result.score);
   });
 
   it('normalizes custom weights before scoring', () => {
@@ -29,7 +32,6 @@ describe('deterministic task scoring', () => {
       impact: 0.5,
       urgency: 0.5,
       alignment: 0,
-      effort: 0,
     });
   });
 

@@ -5,6 +5,52 @@ import { createDatabase, DEFAULT_TENANT_ID, type LifeOSDatabase } from '../packa
 
 const workspaceRoot = fileURLToPath(new URL('../', import.meta.url));
 
+type Sqlite = LifeOSDatabase['sqlite'];
+
+export const TASK_IMAGES_MIGRATION_HINT =
+  '`task_images` table is missing. Run `pnpm db:migrate` before managing attachments; this command did not create or migrate the database.';
+
+export interface TaskImageStorageStats {
+  available: boolean;
+  count: number;
+  totalBytes: number;
+  migrationHint: string | null;
+}
+
+export function taskImageStorageStats(
+  sqlite: Sqlite,
+  workspaceId: string,
+  taskId?: string,
+): TaskImageStorageStats {
+  const available = Boolean(
+    sqlite
+      .prepare("SELECT 1 present FROM sqlite_master WHERE type = 'table' AND name = 'task_images'")
+      .get(),
+  );
+  if (!available) {
+    return {
+      available: false,
+      count: 0,
+      totalBytes: 0,
+      migrationHint: TASK_IMAGES_MIGRATION_HINT,
+    };
+  }
+  const taskClause = taskId === undefined ? '' : ' AND task_id = ?';
+  const params = taskId === undefined ? [workspaceId] : [workspaceId, taskId];
+  const row = sqlite
+    .prepare(
+      `SELECT COUNT(*) count, COALESCE(SUM(size_bytes), 0) totalBytes
+       FROM task_images WHERE workspace_id = ?${taskClause}`,
+    )
+    .get(...params) as { count: number; totalBytes: number };
+  return {
+    available: true,
+    count: row.count,
+    totalBytes: row.totalBytes,
+    migrationHint: null,
+  };
+}
+
 export function hasFlag(name: string, argv = process.argv.slice(2)): boolean {
   return argv.includes(name);
 }

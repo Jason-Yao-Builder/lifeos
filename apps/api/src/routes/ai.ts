@@ -71,7 +71,7 @@ export function aiRoutes(
             if (manualTaskIds.has(task.id)) {
               results.push({
                 task: projectTask(task),
-                explanation: '保留创建任务时设定的人工评分。',
+                explanation: '保留人工设定的评分。',
               });
               continue;
             }
