@@ -1,7 +1,12 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDatabase, DEFAULT_TENANT_ID, type LifeOSDatabase } from '../packages/db/src/index.js';
+import {
+  createDatabase,
+  defaultDatabaseFilename,
+  DEFAULT_TENANT_ID,
+  type LifeOSDatabase,
+} from '../packages/db/src/index.js';
 
 const workspaceRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -72,7 +77,8 @@ export function positiveIntegerOption(name: string, fallback: number): number {
 }
 
 export function resolveDatabaseFilename(): string {
-  const configured = option('--database') ?? process.env.DATABASE_URL ?? 'data/lifeos.db';
+  const configured = option('--database') ?? process.env.DATABASE_URL;
+  if (configured === undefined) return defaultDatabaseFilename();
   const filename = configured.replace(/^file:/, '');
   if (filename === ':memory:') return filename;
   return isAbsolute(filename) ? filename : resolve(workspaceRoot, filename);
@@ -82,7 +88,8 @@ export function openExistingDatabase(): { database: LifeOSDatabase; filename: st
   const filename = resolveDatabaseFilename();
   if (filename === ':memory:') throw new Error('Maintenance scripts require a persistent database file');
   const relativePath = relative(workspaceRoot, filename);
-  if ((relativePath.startsWith('..') || isAbsolute(relativePath)) && !hasFlag('--allow-external')) {
+  const isDefaultUserDatabase = filename === defaultDatabaseFilename();
+  if ((relativePath.startsWith('..') || isAbsolute(relativePath)) && !isDefaultUserDatabase && !hasFlag('--allow-external')) {
     throw new Error('Database is outside workspace; add --allow-external after verifying the path');
   }
   if (!existsSync(filename)) {

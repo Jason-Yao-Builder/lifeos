@@ -25,6 +25,6 @@ scripts/inspect/  打印全局状态或指定任务时间线
 
 ## 指定数据库
 
-所有命令支持 `--database <path>`，优先级高于 `DATABASE_URL`。相对路径固定以 workspace 根目录为基准；不存在的数据库会直接报错，不会创建新文件。workspace 外的文件还必须显式增加 `--allow-external`。
+所有命令默认读取操作系统用户数据目录中的 `lifeos.db`，并支持 `--database <path>`（优先级最高）、`DATABASE_URL` 或 `LIFEOS_DATA_DIR`。显式相对路径固定以 workspace 根目录为基准；不存在的数据库会直接报错，不会创建新文件。除默认用户数据库外，workspace 外的显式路径还必须增加 `--allow-external`。
 
 尚未迁移到附件表的旧数据库会显示明确的 `pnpm db:migrate` 提示；检查和预览不会创建表或自动迁移。

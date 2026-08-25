@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { defaultDatabaseFilename } from '@lifeos/db';
 
 export interface AppConfig {
   host: string;
@@ -26,10 +27,9 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const corsOrigin = env.CORS_ORIGIN?.trim();
   const configuredDatabase = env.DATABASE_URL?.trim();
   const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url));
-  const defaultDatabase = resolve(workspaceRoot, 'data/lifeos.db');
   const databaseUrl = configuredDatabase
     ? resolveDatabaseUrl(configuredDatabase, workspaceRoot)
-    : defaultDatabase;
+    : defaultDatabaseFilename({ env });
   return {
     host: env.HOST ?? '127.0.0.1',
     port,

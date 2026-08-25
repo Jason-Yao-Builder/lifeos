@@ -1,4 +1,5 @@
 import { createDeterministicAI } from '@lifeos/ai';
+import { defaultDatabaseFilename } from '@lifeos/db';
 import { createDatabase } from '@lifeos/db';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
@@ -358,6 +359,11 @@ describe('AI idempotency and debug API', () => {
     expect(readConfig({ DATABASE_URL: './custom.db' }).databaseUrl).toMatch(
       /workspace\/custom\.db$/,
     );
+  });
+
+  it('keeps the default database outside the source workspace', () => {
+    expect(readConfig({}).databaseUrl).toBe(defaultDatabaseFilename({ env: {} }));
+    expect(readConfig({}).databaseUrl).not.toMatch(/workspace\/data\/lifeos\.db$/);
   });
 
   it('retries a failed daily summary and then reuses the recovered card', async () => {

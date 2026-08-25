@@ -18,7 +18,7 @@ pnpm dev
 - OpenAPI：`http://127.0.0.1:4310/docs`
 - 健康检查：`http://127.0.0.1:4310/api/v1/debug/health`
 
-首次启动会自动迁移、初始化数据库，并为启用的重复模板补齐未来 28 天实例；运行期间每小时检查一次。默认数据文件是 `data/lifeos.db`，默认工作区时区是 `Asia/Shanghai`。
+首次启动会自动迁移、初始化数据库，并为启用的重复模板补齐未来 28 天实例；运行期间每小时检查一次。默认数据库位于操作系统用户数据目录（macOS：`~/Library/Application Support/LifeOS/lifeos.db`），不进入源码仓库；默认工作区时区是 `Asia/Shanghai`。
 
 ## 已实现
 
@@ -47,11 +47,11 @@ pnpm build        # 构建 API 与 Web
 
 ## 从 v0.1 升级
 
-先停止服务并备份 `data/lifeos.db`，再执行 `pnpm install --frozen-lockfile && pnpm db:migrate && pnpm verify`。迁移会新增 v0.2 结构，并按三维公式重算现有任务分数；effort 元数据保留。验证通过后运行 `pnpm dev`，检查 `/api/v1/debug/health`。如需回滚，停止服务并恢复升级前的数据库备份。
+先停止服务并备份用户数据目录中的 `lifeos.db`，再执行 `pnpm install --frozen-lockfile && pnpm db:migrate && pnpm verify`。迁移会新增 v0.2 结构，并按三维公式重算现有任务分数；effort 元数据保留。验证通过后运行 `pnpm dev`，检查 `/api/v1/debug/health`。如需回滚，停止服务并恢复升级前的数据库备份。
 
 ## 测试数据维护
 
-维护脚本默认读取 `data/lifeos.db`，也支持 `DATABASE_URL` 或 `--database <path>`。重置命令默认只预览，必须增加 `--confirm` 才会写库。
+维护脚本默认读取操作系统用户数据目录中的数据库，也支持 `LIFEOS_DATA_DIR`、`DATABASE_URL` 或 `--database <path>`。重置命令默认只预览，必须增加 `--confirm` 才会写库。
 
 ```bash
 pnpm data:inspect                                  # 全局状态、分布和最近事件
@@ -63,6 +63,7 @@ pnpm data:reset:task -- --id <task-id> --confirm   # 清理任务及直接关联
 ```
 
 目录与安全语义见 `scripts/README.md`。选择性清理会保留可能被其他任务共享的 AI 运行批次。
+用户数据位置、浏览器存储与 Git 检查方法见 `docs/用户数据与源码分离.md`。
 
 ## 配置
 
@@ -70,6 +71,7 @@ pnpm data:reset:task -- --id <task-id> --confirm   # 清理任务及直接关联
 
 | 变量 | 用途 |
 |---|---|
+| `LIFEOS_DATA_DIR` | 用户数据目录；默认采用操作系统规范目录 |
 | `DATABASE_URL` | SQLite 文件路径或 `:memory:` |
 | `PORT` / `HOST` | API 监听地址 |
 | `WORKSPACE_TIMEZONE` | 今日与规则切日时区 |

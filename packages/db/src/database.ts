@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrateDatabase } from './migrations.js';
+import { defaultDatabaseFilename } from './paths.js';
 import { schema } from './schema.js';
 import { seedDefaults } from './seed.js';
 import { createStore, type LifeOSStore } from './store/index.js';
@@ -27,7 +28,7 @@ export interface LifeOSDatabase {
 }
 
 function resolveFilename(input?: string): string {
-  const configured = input ?? process.env.DATABASE_URL ?? './data/lifeos.db';
+  const configured = input ?? process.env.DATABASE_URL ?? defaultDatabaseFilename();
   return configured.replace(/^file:/, '');
 }
 
