@@ -896,6 +896,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     onUpdate,
     onInheritParent,
     onOpen,
+    rollForwardTargetDate,
     completionMotions = {},
   } = props;
   const { viewModel, actions } = useTaskBoardController(props);
@@ -915,6 +916,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     collapsedQueues,
     draggingId,
     dropTarget,
+    rollingOverdue,
   } = viewModel;
   const TaskRowRenderer = props.renderers?.TaskRow ?? DefaultTaskRow;
   function renderTaskRow({ task, depth, ancestorTitles, lineageIssue, hasChildren }: (typeof visibleRows)[number]): ReactElement {
@@ -1102,7 +1104,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
                   const contentId = `task-queue-content-${section.key}`;
                   return (
                     <section className={`task-queue-section queue-${section.key}`} key={section.key}>
-                      <header>
+                      <header className={section.key === "overdue" ? "has-roll-forward" : undefined}>
                         <button
                           id={toggleId}
                           type="button"
@@ -1117,6 +1119,17 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
                             {collapsed ? "▸" : "▾"}
                           </span>
                         </button>
+                        {section.key === "overdue" && (
+                          <button
+                            type="button"
+                            className="task-queue-roll-forward"
+                            disabled={rollingOverdue}
+                            onClick={() => void actions.rollForwardOverdue()}
+                            aria-label={`将${section.allRows.length}项逾期任务一键顺延至${formatShortDate(rollForwardTargetDate)}`}
+                          >
+                            {rollingOverdue ? "顺延中…" : "一键顺延"}
+                          </button>
+                        )}
                       </header>
                       <div id={contentId} role="tree" aria-labelledby={toggleId} hidden={collapsed}>
                         {section.rows.map(renderTaskRow)}

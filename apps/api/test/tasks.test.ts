@@ -89,6 +89,65 @@ describe('task API', () => {
     });
   });
 
+  it('rolls visible overdue deadlines forward atomically', async () => {
+    const first = await createTask(harness.app, { title: 'First overdue', deadline: '2026-08-19' });
+    const second = await createTask(harness.app, { title: 'Second overdue', deadline: '2026-08-20' });
+    const planned = await createTask(harness.app, {
+      title: 'Planned overdue',
+      plannedDate: '2026-08-20',
+    });
+    const rolled = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/deadlines/roll-forward',
+      payload: {
+        targetDate: '2026-08-25',
+        tasks: [
+          { id: first.id, version: first.version },
+          { id: second.id, version: second.version },
+          { id: planned.id, version: planned.version },
+        ],
+      },
+    });
+    expect(rolled.statusCode).toBe(200);
+    expect(rolled.json().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id, deadline: '2026-08-25T23:59:59+08:00' }),
+      expect.objectContaining({ id: second.id, deadline: '2026-08-25T23:59:59+08:00' }),
+      expect.objectContaining({ id: planned.id, deadline: null, plannedDate: '2026-08-25' }),
+    ]));
+
+    const third = await createTask(harness.app, { title: 'Rollback first', deadline: '2026-08-18' });
+    const fourth = await createTask(harness.app, { title: 'Rollback conflict', deadline: '2026-08-18' });
+    await harness.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tasks/${fourth.id}`,
+      payload: { version: fourth.version, patch: { title: 'Changed elsewhere' } },
+    });
+    const conflict = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/deadlines/roll-forward',
+      payload: {
+        targetDate: '2026-08-25',
+        tasks: [
+          { id: third.id, version: third.version },
+          { id: fourth.id, version: fourth.version },
+        ],
+      },
+    });
+    expect(conflict.statusCode).toBe(409);
+    const unchanged = await harness.app.inject({ method: 'GET', url: `/api/v1/tasks/${third.id}` });
+    expect(unchanged.json()).toMatchObject({
+      deadline: '2026-08-18T23:59:59+08:00',
+      version: third.version,
+    });
+
+    const invalidDate = await harness.app.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/deadlines/roll-forward',
+      payload: { targetDate: '2026-08-20', tasks: [{ id: third.id, version: third.version }] },
+    });
+    expect(invalidDate.statusCode).toBe(400);
+  });
+
   it('persists manual dimensions and does not replace them with automatic scoring', async () => {
     const scoreDimensions = { impact: 80, urgency: 60, alignment: 90, effort: 40 };
     const created = await createTask(harness.app, { title: 'Manual priority', scoreDimensions });

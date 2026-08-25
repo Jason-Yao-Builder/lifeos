@@ -73,7 +73,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(swaggerUi, { routePrefix: '/docs' });
   installErrorHandling(app);
 
-  await app.register(taskRoutes(dependencies), { prefix: '/api/v1' });
+  await app.register(taskRoutes(dependencies, timeZone), { prefix: '/api/v1' });
   await app.register(taskGroupRoutes(dependencies), { prefix: '/api/v1' });
   await app.register(taskImageRoutes(dependencies), { prefix: '/api/v1' });
   await app.register(taskStructureRoutes(dependencies), { prefix: '/api/v1' });

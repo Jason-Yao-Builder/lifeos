@@ -35,6 +35,7 @@ export interface LifeOSApi {
   getDay(date: string): Promise<Task[]>;
   createTask(input: CreateTask): Promise<Task>;
   updateTask(id: string, version: number, patch: UpdateTask): Promise<Task>;
+  rollForwardDeadlines(tasks: Array<Pick<Task, "id" | "version">>, targetDate: string): Promise<Task[]>;
   inheritParentTask(id: string, version: number): Promise<Task>;
   reorderTasks(orderedIds: string[]): Promise<Task[]>;
   getTaskGroups(): Promise<TaskGroup[]>;
@@ -247,6 +248,12 @@ const httpApi: LifeOSApi = {
       body: JSON.stringify({ version, patch }),
     });
     return "task" in result ? result.task : result;
+  },
+  async rollForwardDeadlines(tasks, targetDate) {
+    return itemsOf(await request<Task[] | TaskListResponse>("/tasks/deadlines/roll-forward", {
+      method: "POST",
+      body: JSON.stringify({ targetDate, tasks }),
+    }));
   },
   async inheritParentTask(id, version) {
     const result = await request<Task | { task: Task }>(

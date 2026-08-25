@@ -544,6 +544,37 @@ export function createDemoApi(): LifeOSApi {
       saveStore(store);
       return pause(next, 120);
     },
+    async rollForwardDeadlines(tasks, targetDate) {
+      if (targetDate < localDate()) throw new Error("顺延日期不能早于今天");
+      const selected = tasks.map(({ id, version }) => {
+        const task = taskById(id);
+        if (task.version !== version) throw new Error("任务已在其他地方更新，请刷新后重试");
+        const currentTargetDate = task.deadline?.slice(0, 10) ?? task.plannedDate;
+        if (
+          !currentTargetDate ||
+          currentTargetDate >= localDate() ||
+          !["todo", "in_progress"].includes(task.status)
+        ) throw new Error("任务已不再逾期，请刷新后重试");
+        return task;
+      });
+      const updated = selected.map((task): Task => ({
+        ...task,
+        ...(task.deadline
+          ? { deadline: `${targetDate}T23:59:59+08:00`, hardness: "hard" as const }
+          : { plannedDate: targetDate }),
+        version: task.version + 1,
+        updatedAt: stamp(),
+      }));
+      const updatesById = new Map(updated.map((task) => [task.id, task]));
+      for (const task of updated) {
+        const before = taskById(task.id);
+        const field = before.deadline ? "deadline" : "plannedDate";
+        addEvent(task, field, before[field], task[field], "一键顺延任务日期");
+      }
+      store.tasks = store.tasks.map((task) => updatesById.get(task.id) ?? task);
+      saveStore(store);
+      return pause(updated, 160);
+    },
     async inheritParentTask(id, version) {
       const current = taskById(id);
       if (current.version !== version) throw new Error("任务已在其他地方更新，请刷新后重试");

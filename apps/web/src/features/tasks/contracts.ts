@@ -72,6 +72,8 @@ export interface TaskBoardProps {
     patch: Partial<Pick<TaskGroup, "name" | "color">>,
   ) => Promise<TaskGroup>;
   onUpdate: (task: Task, patch: UpdateTask) => Promise<boolean | void>;
+  rollForwardTargetDate: string;
+  onRollForwardOverdue: (tasks: Task[]) => Promise<void>;
   onInheritParent: (task: Task) => Promise<void>;
   completionMotions?: Readonly<Partial<Record<string, TaskCompletionMotion>>>;
   onOpen: (task: Task) => void;

@@ -75,6 +75,8 @@ function renderBoard(
       })}
       onUpdate={async () => undefined}
       onInheritParent={async () => undefined}
+      rollForwardTargetDate={todayKey()}
+      onRollForwardOverdue={async () => undefined}
       completionMotions={completionMotions}
       onOpen={() => undefined}
       onReorder={async () => undefined}
@@ -393,7 +395,7 @@ describe("TaskBoard task groups", () => {
   it("keeps the title-line group control visible in completed-row markup", () => {
     const html = renderBoard([{
       ...unscoredTask,
-      completedAt: "2026-08-24T09:00:00.000Z",
+      completedAt: `${todayKey()}T09:00:00+08:00`,
       groupId: group.id,
       status: "completed",
     }], "tasks", {}, [group]);
@@ -474,6 +476,23 @@ describe("TaskBoard task groups", () => {
 
     expect(nameRule).toContain("width: 112px");
     expect(colorRule).toContain("width: 28px");
+  });
+});
+
+describe("TaskBoard overdue queue", () => {
+  it("offers one atomic roll-forward action for the visible overdue tasks", () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const deadline = [
+      yesterday.getFullYear(),
+      String(yesterday.getMonth() + 1).padStart(2, "0"),
+      String(yesterday.getDate()).padStart(2, "0"),
+    ].join("-");
+    const html = renderBoard([{ ...unscoredTask, deadline }], "tasks");
+
+    expect(html).toContain("已逾期");
+    expect(html).toContain("一键顺延");
+    expect(html).toContain("1项逾期任务一键顺延至");
   });
 });
 

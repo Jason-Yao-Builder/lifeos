@@ -47,6 +47,27 @@ export const ReorderBodySchema = z
   })
   .strict();
 
+export const RollForwardDeadlinesBodySchema = z
+  .object({
+    targetDate: LocalDateSchema,
+    tasks: z
+      .array(
+        z
+          .object({
+            id: EntityIdSchema,
+            version: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500)
+      .refine(
+        (items) => new Set(items.map((item) => item.id)).size === items.length,
+        'Task ids must be unique',
+      ),
+  })
+  .strict();
+
 export const CardListQuerySchema = z
   .object({
     status: CardStatusSchema.optional(),

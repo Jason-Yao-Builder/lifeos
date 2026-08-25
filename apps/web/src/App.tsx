@@ -21,6 +21,7 @@ import type {
   AppView,
 } from "./app/contracts";
 import { loadApplicationData, taskBelongsToDate } from "./app/data-controller";
+import { loadRollForwardDate, saveRollForwardDate, validRollForwardDate } from "./app/preferences";
 import {
   emptyTaskFilters,
   isKnownTaskGroup,
@@ -130,6 +131,8 @@ export function App(): ReactElement {
   const [review, setReview] = useState(reviewRoute);
   const [cards, setCards] = useState<AiCard[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [rollForwardDate, setRollForwardDate] = useState(() =>
+    loadRollForwardDate(todayKey(), window.localStorage));
   const [filters, setFilters] = useState<AppTaskFilters>(initialTaskFilters);
   const [taskGroupsLoaded, setTaskGroupsLoaded] = useState(false);
   const [taskGroupsExpanded, setTaskGroupsExpanded] = useState(true);
@@ -358,6 +361,24 @@ export function App(): ReactElement {
       setToast("已继承父任务的分组、标签与评分");
     } catch (reason) {
       setToast(reason instanceof Error ? reason.message : "继承失败，任务保持不变");
+      throw reason;
+    }
+  }
+
+  async function rollForwardOverdue(overdueTasks: Task[]): Promise<void> {
+    try {
+      const saved = await api.rollForwardDeadlines(
+        overdueTasks.map(({ id, version }) => ({ id, version })),
+        rollForwardDate,
+      );
+      const savedById = new Map(saved.map((task) => [task.id, task]));
+      setTasks((current) => current.map((task) => savedById.get(task.id) ?? task));
+      setTodayTasks((current) => current
+        .map((task) => savedById.get(task.id) ?? task)
+        .filter(belongsToToday));
+      setToast(`已将 ${saved.length} 项任务顺延至 ${rollForwardDate}`);
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : "顺延失败，所有任务保持不变");
       throw reason;
     }
   }
@@ -826,6 +847,8 @@ export function App(): ReactElement {
               onUpdateTaskGroup={updateTaskGroup}
               onUpdate={safeTaskUpdate}
               onInheritParent={inheritParentTask}
+              rollForwardTargetDate={rollForwardDate}
+              onRollForwardOverdue={rollForwardOverdue}
               completionMotions={completionMotions}
               onOpen={shellActions.openTask}
               onReorder={reorderTasks}
@@ -848,6 +871,8 @@ export function App(): ReactElement {
             onUpdateTaskGroup={updateTaskGroup}
             onUpdate={safeTaskUpdate}
             onInheritParent={inheritParentTask}
+            rollForwardTargetDate={rollForwardDate}
+            onRollForwardOverdue={rollForwardOverdue}
             completionMotions={completionMotions}
             onOpen={shellActions.openTask}
             onReorder={reorderTasks}
@@ -904,6 +929,24 @@ export function App(): ReactElement {
                 </span>
                 <i aria-hidden="true">›</i>
               </button>
+              <div className="settings-item settings-item-control">
+                <span className="settings-item-icon" aria-hidden="true">↪</span>
+                <label htmlFor="roll-forward-target-date">
+                  <strong>一键顺延日期</strong>
+                  <small>逾期任务默认顺延到今天；也可以预设一个未来日期</small>
+                </label>
+                <input
+                  id="roll-forward-target-date"
+                  type="date"
+                  min={todayKey()}
+                  value={rollForwardDate}
+                  onChange={(event) => {
+                    const next = validRollForwardDate(event.currentTarget.value, todayKey());
+                    setRollForwardDate(next);
+                    saveRollForwardDate(next, window.localStorage);
+                  }}
+                />
+              </div>
             </div>
           </section>
         )}

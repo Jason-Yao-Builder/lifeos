@@ -46,6 +46,7 @@ export interface TaskBoardViewModel extends TaskBoardProjection {
   collapsedQueues: ReadonlySet<TaskQueueGroupKey>;
   draggingId: string | null;
   dropTarget: TaskDropTarget | null;
+  rollingOverdue: boolean;
 }
 
 export interface TaskBoardActions {
@@ -57,6 +58,7 @@ export interface TaskBoardActions {
   selectGroup: (groupId: string) => void;
   toggleTaskChildren: (taskId: string) => void;
   toggleQueue: (key: TaskQueueGroupKey) => void;
+  rollForwardOverdue: () => Promise<void>;
   nativeDragStart: (event: DragEvent, taskId: string) => void;
   nativeDragEnd: () => void;
   nativeDragOver: (event: DragEvent, taskId: string) => void;
@@ -108,6 +110,7 @@ export function useTaskBoardController(props: TaskBoardProps): TaskBoardControll
   const [groupColor, setGroupColor] = useState(initialFilterGroup?.color ?? "");
   const [groupSaving, setGroupSaving] = useState(false);
   const [groupError, setGroupError] = useState("");
+  const [rollingOverdue, setRollingOverdue] = useState(false);
   const selectedFilterGroupId = useRef<string | null>(null);
   const pointerDrag = useRef<{
     pointerId: number;
@@ -370,6 +373,20 @@ export function useTaskBoardController(props: TaskBoardProps): TaskBoardControll
     });
   }
 
+  async function rollForwardOverdue(): Promise<void> {
+    if (rollingOverdue) return;
+    const overdueTasks = projection.queueSections
+      .find((section) => section.key === "overdue")
+      ?.allRows.map(({ task }) => task) ?? [];
+    if (overdueTasks.length === 0) return;
+    setRollingOverdue(true);
+    try {
+      await props.onRollForwardOverdue(overdueTasks);
+    } finally {
+      setRollingOverdue(false);
+    }
+  }
+
   const viewModel: TaskBoardViewModel = {
     ...projection,
     currentDate,
@@ -387,6 +404,7 @@ export function useTaskBoardController(props: TaskBoardProps): TaskBoardControll
     collapsedQueues,
     draggingId,
     dropTarget,
+    rollingOverdue,
   };
 
   return {
@@ -400,6 +418,7 @@ export function useTaskBoardController(props: TaskBoardProps): TaskBoardControll
       selectGroup: (groupId) => onFiltersChange({ ...filters, group: groupId }),
       toggleTaskChildren,
       toggleQueue,
+      rollForwardOverdue,
       nativeDragStart: (event, taskId) => {
         setDraggingId(taskId);
         setDropTarget(null);
