@@ -5,7 +5,6 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import type {
-  CreateTask,
   Task,
   TaskGroup,
   TaskStatus,
@@ -65,7 +64,7 @@ export interface TaskBoardProps {
   tags: string[];
   onViewChange: (view: "tasks" | "today") => void;
   onFiltersChange: (filters: TaskFilters) => void;
-  onAdd: (input: CreateTask) => Promise<void>;
+  onCreateTask: () => void;
   onCreateTaskGroup: (input: Pick<TaskGroup, "name" | "color">) => Promise<TaskGroup>;
   onUpdateTaskGroup: (
     id: string,

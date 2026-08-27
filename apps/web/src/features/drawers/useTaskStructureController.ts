@@ -6,7 +6,6 @@ import type {
   TaskProgress,
 } from "../../types";
 import type { TaskStructureProps } from "./contracts";
-import { hierarchyDepth } from "../../v02-utils";
 import {
   drawerError,
   knownDirectSubtasks,
@@ -30,9 +29,9 @@ export interface TaskStructureViewState {
 export interface TaskStructureActions {
   reload: () => Promise<void>;
   clearError: () => void;
-  addSubtask: (title: string) => Promise<boolean>;
   persistSubtaskOrder: (nextIds: string[]) => Promise<boolean>;
   addDependency: (predecessorId: string) => Promise<boolean>;
+  addSuccessor: (successorId: string) => Promise<boolean>;
   removeDependency: (dependencyId: string) => Promise<boolean>;
   createRepeat: (cronExpr: string) => Promise<boolean>;
   generateRepeat: (templateId: string) => Promise<boolean>;
@@ -93,25 +92,17 @@ export function useTaskStructureController({
     };
   }, [reload]);
 
-  async function addSubtask(title: string): Promise<boolean> {
-    if (!title.trim() || hierarchyDepth(task, allTasks) >= 3) return false;
-    setBusy(true);
-    setError("");
-    try {
-      await api.createSubtask(task.id, {
-        title: title.trim(),
-        temperature: task.temperature,
-        plannedDate: task.plannedDate,
-      });
-      await Promise.all([reload(), onChangedRef.current()]);
-      return true;
-    } catch (reason) {
-      setError(drawerError(reason, "子任务创建失败"));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
+  useEffect(() => {
+    const known = knownDirectSubtasks(task.id, allTasks);
+    setSubtasks((current) => {
+      const knownById = new Map(known.map((item) => [item.id, item]));
+      const refreshed = current
+        .map((item) => knownById.get(item.id))
+        .filter((item): item is Task => Boolean(item));
+      const refreshedIds = new Set(refreshed.map((item) => item.id));
+      return [...refreshed, ...known.filter((item) => !refreshedIds.has(item.id))];
+    });
+  }, [allTasks, task.id]);
 
   async function persistSubtaskOrder(nextIds: string[]): Promise<boolean> {
     const currentIds = subtasks.map((item) => item.id);
@@ -159,6 +150,14 @@ export function useTaskStructureController({
     );
   }
 
+  async function addSuccessor(successorId: string): Promise<boolean> {
+    if (!successorId) return false;
+    return runMutation(
+      () => api.addDependency(successorId, task.id),
+      "后置任务关联失败",
+    );
+  }
+
   async function removeDependency(dependencyId: string): Promise<boolean> {
     return runMutation(
       () => api.deleteDependency(task.id, dependencyId),
@@ -173,7 +172,7 @@ export function useTaskStructureController({
       const template = await api.createRepeatTemplate({
         title: task.title,
         description: task.description,
-        temperature: task.temperature,
+        temperature: "warm",
         tags: task.tags,
         goalId: task.goalId ?? null,
         cronExpr: cronExpr.trim(),
@@ -233,9 +232,9 @@ export function useTaskStructureController({
     actions: {
       reload,
       clearError: () => setError(""),
-      addSubtask,
       persistSubtaskOrder,
       addDependency,
+      addSuccessor,
       removeDependency,
       createRepeat,
       generateRepeat,

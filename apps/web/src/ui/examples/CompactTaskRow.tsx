@@ -43,7 +43,6 @@ export function CompactTaskRow({
       style={style}
       data-slot="task-row"
       data-status={task.status}
-      data-temperature={task.temperature}
       data-depth={depth}
       data-state={done ? "complete" : "active"}
       role="treeitem"

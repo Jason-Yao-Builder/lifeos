@@ -7,6 +7,8 @@ import {
   ganttGroupGradient,
   ganttGroupAccessibleLabel,
   ganttPreviewAppearance,
+  ganttReorderAnchor,
+  ganttReorderScope,
   ganttTaskAppearance,
   loadGanttSnapshot,
   stableGanttTaskOrder,
@@ -93,6 +95,21 @@ describe("stableGanttTaskOrder", () => {
   });
 });
 
+describe("Gantt row reorder", () => {
+  it("reorders only siblings and treats a descendant row as its root anchor", () => {
+    const first = task("first", 0);
+    const child = task("child", 1, { parentTaskId: first.id });
+    const second = task("second", 2);
+    const nested = task("nested", 3, { parentTaskId: second.id });
+    const tasks = [first, child, second, nested];
+
+    expect(ganttReorderScope(tasks, first.id)).toEqual([first.id, second.id]);
+    expect(ganttReorderScope(tasks, child.id)).toEqual([child.id]);
+    expect(ganttReorderAnchor(tasks, first.id, nested.id)).toBe(second.id);
+    expect(ganttReorderAnchor(tasks, first.id, child.id)).toBeNull();
+  });
+});
+
 describe("ganttDragPreview", () => {
   it("previews move, start and end with the same target date used for commit", () => {
     const current = task("a", 0, { startAt: "2026-08-24", endAt: "2026-08-26" });
@@ -143,17 +160,17 @@ describe("Gantt group colors", () => {
       .toBe("linear-gradient(90deg, #336699 0%, #336699 100%, #cedae7 100%, #cedae7 100%)");
   });
 
-  it("keeps temperature colors as the fallback for ungrouped and unresolved groups", () => {
+  it("uses a neutral fallback for ungrouped and unresolved groups", () => {
     const ungrouped = ganttTaskAppearance(task("ungrouped", 1, { temperature: "cold" }), [productGroup]);
     const missingGroup = ganttTaskAppearance(
       task("missing-group", 2, { groupId: "unknown", temperature: "inspiration" }),
       [productGroup],
     );
 
-    expect(ungrouped.className).toContain("temperature-cold");
+    expect(ungrouped.className).toBe("gantt-bar");
     expect(ungrouped.className).not.toContain("gantt-group-colored");
     expect(ungrouped.style).not.toHaveProperty("--task-group-color");
-    expect(missingGroup.className).toContain("temperature-inspiration");
+    expect(missingGroup.className).toBe("gantt-bar");
     expect(missingGroup.group).toBeNull();
   });
 
@@ -178,8 +195,8 @@ describe("Gantt group colors", () => {
     expect(ghost.style["--task-group-color"]).toBe(bar.style["--task-group-color"]);
     expect(ghost.style.background).toBe(ganttGroupGradient(productGroup.color, 65));
     expect(temperatureGhost.style).toMatchObject({
-      "--gantt-preview-fill": "#f2dfb4",
-      "--gantt-preview-border": "#af873d",
+      "--gantt-preview-fill": "#e4e9e5",
+      "--gantt-preview-border": "#839188",
     });
     expect(temperatureGhost.style).not.toHaveProperty("borderColor");
   });

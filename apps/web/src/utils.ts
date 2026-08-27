@@ -1,11 +1,4 @@
-import type { CardType, TaskScoreDimensions, TaskStatus, Temperature } from "./types";
-
-export const temperatureLabels: Record<Temperature, string> = {
-  hot: "热",
-  warm: "温",
-  cold: "冷",
-  inspiration: "灵感",
-};
+import type { CardType, TaskScoreDimensions, TaskStatus } from "./types";
 
 export const statusLabels: Record<TaskStatus, string> = {
   todo: "未开始",
@@ -106,8 +99,6 @@ export function readableValue(value: unknown): string {
   if (Array.isArray(value)) return value.join("、") || "无";
   if (typeof value === "boolean") return value ? "开启" : "关闭";
   if (typeof value === "string") {
-    if (value in temperatureLabels)
-      return temperatureLabels[value as Temperature];
     if (value in statusLabels) return statusLabels[value as TaskStatus];
   }
   return String(value);

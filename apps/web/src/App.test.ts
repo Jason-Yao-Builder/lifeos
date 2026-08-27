@@ -6,19 +6,15 @@ import {
   isSettingsArea,
   isViewsArea,
   isKnownTaskGroup,
+  shouldCloseTaskOnViewChange,
   shouldPushTaskGroupNavigation,
-  shouldPushTaskTemperatureNavigation,
   TaskGroupSidebar,
-  TemperatureSidebar,
   taskFiltersForGroup,
   taskFiltersForHistoryEntry,
-  taskFiltersForTemperature,
   taskGroupFromLocation,
   taskGroupNavigationItems,
   taskGroupPath,
   taskHistoryState,
-  taskTemperatureFromLocation,
-  temperatureNavigationItems,
   viewForPathname,
 } from "./App";
 import type { TaskFilters } from "./TaskBoard";
@@ -49,6 +45,13 @@ describe("application navigation", () => {
     expect(isViewsArea("tasks")).toBe(false);
   });
 
+  it("closes an expanded task whenever navigation enters another view", () => {
+    expect(shouldCloseTaskOnViewChange("tasks", "calendar")).toBe(true);
+    expect(shouldCloseTaskOnViewChange("calendar", "gantt")).toBe(true);
+    expect(shouldCloseTaskOnViewChange("calendar", "calendar")).toBe(false);
+    expect(shouldCloseTaskOnViewChange("calendar", "tasks")).toBe(false);
+  });
+
   it("renders one views entry for calendar and gantt routes", () => {
     vi.stubGlobal("window", {
       location: { pathname: "/gantt", search: "" },
@@ -69,7 +72,7 @@ describe("application navigation", () => {
     expect(mobileNav).not.toContain('<small>甘特</small>');
   });
 
-  it("renders settings, task groups, and temperature in that sidebar order", () => {
+  it("renders settings and task groups without the retired temperature section", () => {
     vi.stubGlobal("window", {
       location: { pathname: "/tasks", search: "" },
       history: { state: null },
@@ -80,12 +83,11 @@ describe("application navigation", () => {
     const sidebar = html.slice(html.indexOf('<aside class="sidebar"'), html.indexOf("</aside>"));
     const settingsIndex = sidebar.indexOf("<span>设置</span>");
     const taskGroupsIndex = sidebar.indexOf('aria-label="任务分组"');
-    const temperatureIndex = sidebar.indexOf(">温度分布</span>");
 
     expect(settingsIndex).toBeGreaterThan(-1);
     expect(taskGroupsIndex).toBeGreaterThan(settingsIndex);
-    expect(temperatureIndex).toBeGreaterThan(taskGroupsIndex);
-    expect(html).toContain('aria-label="移动端温度"');
+    expect(sidebar).not.toContain("温度分布");
+    expect(html).not.toContain('aria-label="移动端温度"');
   });
 });
 
@@ -129,15 +131,12 @@ describe("task group navigation", () => {
     expect(taskGroupPath("all")).toBe("/tasks");
     expect(taskGroupPath("ungrouped")).toBe("/tasks?group=ungrouped");
     expect(taskGroupPath("复星 实习")).toBe("/tasks?group=%E5%A4%8D%E6%98%9F+%E5%AE%9E%E4%B9%A0");
-    expect(taskGroupPath("all", "hot")).toBe("/tasks?temperature=hot");
+    expect(taskGroupPath("all", "hot")).toBe("/tasks");
     expect(taskGroupPath("group-internship", "warm"))
-      .toBe("/tasks?group=group-internship&temperature=warm");
+      .toBe("/tasks?group=group-internship");
     expect(taskGroupFromLocation("/tasks", "?group=group-internship")).toBe("group-internship");
     expect(taskGroupFromLocation("/tasks", "?group=all")).toBe("all");
     expect(taskGroupFromLocation("/today", "?group=group-internship")).toBe("all");
-    expect(taskTemperatureFromLocation("/tasks", "?temperature=hot")).toBe("hot");
-    expect(taskTemperatureFromLocation("/tasks", "?temperature=unsafe")).toBe("all");
-    expect(taskTemperatureFromLocation("/today", "?temperature=hot")).toBe("all");
   });
 
   it("restores validated transient filters while the URL remains authoritative for group", () => {
@@ -158,7 +157,7 @@ describe("task group navigation", () => {
     )).toEqual({
       ...stored,
       group: "group-internship",
-      temperature: "warm",
+      temperature: "all",
     });
     expect(taskFiltersForHistoryEntry("/gantt", "?group=group-internship", state)).toEqual({
       temperature: "all",
@@ -198,20 +197,6 @@ describe("task group navigation", () => {
       "group-internship",
       "group-internship",
       "hot",
-    )).toBe(false);
-    expect(shouldPushTaskTemperatureNavigation(
-      "/tasks",
-      "?group=group-internship&temperature=hot",
-      "group-internship",
-      "hot",
-      "hot",
-    )).toBe(false);
-    expect(shouldPushTaskTemperatureNavigation(
-      "/tasks",
-      "?group=group-internship&temperature=hot",
-      "group-internship",
-      "hot",
-      "cold",
     )).toBe(true);
   });
 
@@ -245,62 +230,5 @@ describe("task group navigation", () => {
     expect(expanded).toContain('--sidebar-group-color:#0DE311');
     expect(collapsed).toContain('aria-expanded="false"');
     expect(collapsed).not.toContain('id="sidebar-task-group-list"');
-  });
-});
-
-describe("temperature navigation", () => {
-  const items = temperatureNavigationItems([
-    { temperature: "hot" },
-    { temperature: "hot" },
-    { temperature: "warm" },
-    { temperature: "inspiration" },
-  ]);
-
-  it("lists all temperatures and literal task counts", () => {
-    expect(items).toEqual([
-      { id: "all", label: "全部温度", count: 4 },
-      { id: "hot", label: "热", count: 2 },
-      { id: "warm", label: "温", count: 1 },
-      { id: "cold", label: "冷", count: 0 },
-      { id: "inspiration", label: "灵感", count: 1 },
-    ]);
-  });
-
-  it("changes only temperature so group and other filters remain intersected", () => {
-    const filters: TaskFilters = {
-      temperature: "all",
-      status: "todo",
-      tag: "API",
-      time: "target_future",
-      group: "group-internship",
-    };
-
-    expect(taskFiltersForTemperature(filters, "hot")).toEqual({
-      ...filters,
-      temperature: "hot",
-    });
-  });
-
-  it("renders an accessible active item and can collapse its list", () => {
-    const expanded = renderToStaticMarkup(createElement(TemperatureSidebar, {
-      items,
-      selected: "hot",
-      expanded: true,
-      onToggle: () => undefined,
-      onSelect: () => undefined,
-    }));
-    const collapsed = renderToStaticMarkup(createElement(TemperatureSidebar, {
-      items,
-      selected: "hot",
-      expanded: false,
-      onToggle: () => undefined,
-      onSelect: () => undefined,
-    }));
-
-    expect(expanded).toContain('aria-label="全部温度，4 项任务"');
-    expect(expanded).toMatch(/sidebar-temperature-link is-hot active[^>]*aria-pressed="true"/);
-    expect(expanded).toContain('aria-expanded="true"');
-    expect(collapsed).toContain('aria-expanded="false"');
-    expect(collapsed).not.toContain('id="sidebar-temperature-list"');
   });
 });

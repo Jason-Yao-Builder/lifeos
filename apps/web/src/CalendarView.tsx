@@ -10,7 +10,7 @@ import {
   deadlineLevel,
   passedPointerDragThreshold,
 } from "./v02-utils";
-import { statusLabels, temperatureLabels } from "./utils";
+import { statusLabels } from "./utils";
 
 export interface CalendarViewProps {
   api: LifeOSApi;
@@ -250,7 +250,7 @@ function CalendarGrid({
                 return (
                   <button
                     type="button"
-                    className={`calendar-task temperature-${task.temperature} ${onlyDeadline ? "deadline-only" : ""} ${level ? `deadline-${level}` : ""}`}
+                    className={`calendar-task ${onlyDeadline ? "deadline-only" : ""} ${level ? `deadline-${level}` : ""}`}
                     draggable={movable}
                     key={`${task.id}-${onlyDeadline ? "deadline" : "planned"}`}
                     aria-describedby={movable ? "calendar-drag-help" : undefined}
@@ -271,7 +271,7 @@ function CalendarGrid({
                       }
                       onOpen(task);
                     }}
-                    title={`${task.title}｜${temperatureLabels[task.temperature]}｜${statusLabels[task.status]}`}
+                    title={`${task.title}｜${statusLabels[task.status]}`}
                   >
                     {task.repeatTemplateId && <span aria-label="重复任务">↻</span>}
                     {onlyDeadline && <span aria-label="Deadline">◆</span>}

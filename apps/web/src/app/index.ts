@@ -7,7 +7,6 @@ export type {
   AppTaskFilters,
   AppView,
   TaskGroupNavigationItem,
-  TemperatureNavigationItem,
 } from "./contracts";
 export type {
   ApplicationDataLoadResult,
@@ -27,15 +26,11 @@ export {
   pathForView,
   reviewRouteForPathname,
   shouldPushTaskGroupNavigation,
-  shouldPushTaskTemperatureNavigation,
   taskFiltersForGroup,
   taskFiltersForHistoryEntry,
-  taskFiltersForTemperature,
   taskGroupFromLocation,
   taskGroupNavigationItems,
   taskGroupPath,
   taskHistoryState,
-  taskTemperatureFromLocation,
-  temperatureNavigationItems,
   viewForPathname,
 } from "./navigation";

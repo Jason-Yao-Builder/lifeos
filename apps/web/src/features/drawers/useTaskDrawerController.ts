@@ -50,7 +50,7 @@ export function useTaskDrawerController(
     setDraft(createTaskDraft(task));
     if (!task || previousTaskId.current === null) setTab("details");
     setError("");
-    setTagInput("");
+    setTagInput(task?.tags.join("，") ?? "");
     setGroupCreatorOpen(false);
     previousTaskId.current = task?.id ?? null;
   }, [task]);

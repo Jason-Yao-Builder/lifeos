@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactElement } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from "react";
 import { createApi, hasConfiguredApi } from "./api";
-import type { LifeOSApi } from "./api";
+import type { CreateSubtaskInput, LifeOSApi } from "./api";
 import { GoalsView } from "./GoalsView";
 import { CoachIcon, SettingsIcon } from "./Icons";
 import { MorningPlanner, ReviewView } from "./ReviewView";
 import { taskCompletionMotionDuration } from "./TaskBoard";
 import type { TaskCompletionMotion } from "./TaskBoard";
-import type { AiCard, CreateTask, Goal, Rule, Task, TaskGroup, UpdateTask } from "./types";
+import type { AiCard, Goal, Rule, Task, TaskGroup, UpdateTask } from "./types";
 import { todayKey } from "./utils";
 import { mergeScopedOrder, reorderTaskIds } from "./v02-utils";
 import type { TaskDropPosition } from "./v02-utils";
@@ -21,7 +21,14 @@ import type {
   AppView,
 } from "./app/contracts";
 import { loadApplicationData, taskBelongsToDate } from "./app/data-controller";
-import { loadRollForwardDate, saveRollForwardDate, validRollForwardDate } from "./app/preferences";
+import {
+  loadRollForwardDate,
+  loadTaskEditorPlaceholders,
+  saveRollForwardDate,
+  saveTaskEditorPlaceholders,
+  validRollForwardDate,
+} from "./app/preferences";
+import type { TaskEditorPlaceholderKey } from "./app/preferences";
 import {
   emptyTaskFilters,
   isKnownTaskGroup,
@@ -29,19 +36,17 @@ import {
   isViewsArea,
   pathForView,
   reviewRouteForPathname,
+  shouldCloseTaskOnViewChange,
   shouldPushTaskGroupNavigation,
-  shouldPushTaskTemperatureNavigation,
   taskFiltersForGroup,
   taskFiltersForHistoryEntry,
-  taskFiltersForTemperature,
   taskGroupNavigationItems,
   taskGroupPath,
   taskHistoryState,
-  temperatureNavigationItems,
   viewForPathname,
 } from "./app/navigation";
 
-export { AppSidebar, TaskGroupSidebar, TemperatureSidebar } from "./features/shell/AppSidebar";
+export { AppSidebar, TaskGroupSidebar } from "./features/shell/AppSidebar";
 export type {
   AppSidebarActions,
   AppSidebarProps,
@@ -56,27 +61,77 @@ export type {
   AppTaskFilters,
   AppView,
   TaskGroupNavigationItem,
-  TemperatureNavigationItem,
 } from "./app/contracts";
 export {
   isKnownTaskGroup,
   isSettingsArea,
   isViewsArea,
+  shouldCloseTaskOnViewChange,
   shouldPushTaskGroupNavigation,
-  shouldPushTaskTemperatureNavigation,
   taskFiltersForGroup,
   taskFiltersForHistoryEntry,
-  taskFiltersForTemperature,
   taskGroupFromLocation,
   taskGroupNavigationItems,
   taskGroupPath,
   taskHistoryState,
-  taskTemperatureFromLocation,
-  temperatureNavigationItems,
   viewForPathname,
 } from "./app/navigation";
 
 type SidebarGroupStyle = CSSProperties & { "--sidebar-group-color"?: string };
+
+type TaskCard =
+  | { key: string; mode: "edit"; taskId: string }
+  | { key: string; mode: "create-task"; task: Task }
+  | { key: string; mode: "create-subtask"; task: Task; parentTaskId: string };
+
+function taskDraft(view: AppView): Task {
+  const now = new Date().toISOString();
+  return {
+    id: `draft-task-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    version: 1,
+    title: "",
+    description: null,
+    temperature: "warm",
+    status: "todo",
+    hardness: "soft",
+    deadline: null,
+    plannedDate: view === "today" ? todayKey() : null,
+    groupId: null,
+    tags: [],
+    score: null,
+    rank: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function subtaskDraft(parent: Task): Task {
+  const now = new Date().toISOString();
+  return {
+    ...parent,
+    id: `draft-subtask-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    version: 1,
+    title: "",
+    description: null,
+    deadline: null,
+    startAt: null,
+    endAt: null,
+    parentTaskId: parent.id,
+    repeatTemplateId: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+const taskEditorPlaceholderSettings: Array<{
+  key: TaskEditorPlaceholderKey;
+  label: string;
+}> = [
+  { key: "title", label: "任务名称" },
+  { key: "description", label: "描述" },
+  { key: "tags", label: "标签" },
+];
 
 function initialView(): AppView {
   return viewForPathname(window.location.pathname);
@@ -133,11 +188,13 @@ export function App(): ReactElement {
   const [rules, setRules] = useState<Rule[]>([]);
   const [rollForwardDate, setRollForwardDate] = useState(() =>
     loadRollForwardDate(todayKey(), window.localStorage));
+  const [taskEditorPlaceholders, setTaskEditorPlaceholders] = useState(() =>
+    loadTaskEditorPlaceholders(window.localStorage));
   const [filters, setFilters] = useState<AppTaskFilters>(initialTaskFilters);
   const [taskGroupsLoaded, setTaskGroupsLoaded] = useState(false);
   const [taskGroupsExpanded, setTaskGroupsExpanded] = useState(true);
-  const [temperaturesExpanded, setTemperaturesExpanded] = useState(true);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskCards, setTaskCards] = useState<TaskCard[]>([]);
+  const previousViewRef = useRef(view);
   const [aiOpen, setAiOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [aiDegraded, setAiDegraded] = useState(false);
@@ -151,10 +208,74 @@ export function App(): ReactElement {
   >({});
   const completionMotionsRef = useRef(new Map<string, TaskCompletionMotion>());
 
-  const selectedTask =
-    tasks.find((task) => task.id === selectedTaskId) ??
-    todayTasks.find((task) => task.id === selectedTaskId) ??
-    null;
+  const resolvedTaskCards = taskCards.flatMap((card) => {
+    const task = card.mode !== "edit"
+      ? card.task
+      : tasks.find((item) => item.id === card.taskId)
+        ?? todayTasks.find((item) => item.id === card.taskId);
+    return task ? [{ ...card, task }] : [];
+  });
+  const selectedTask = resolvedTaskCards[resolvedTaskCards.length - 1]?.task ?? null;
+  const workspaceRailVisible = loadState === "ready" && (view === "tasks" || view === "today");
+
+  function closeTaskFromWorkspaceBlank(event: ReactPointerEvent<HTMLElement>): void {
+    if (taskCards.length === 0 || !workspaceRailVisible) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("button, a, input, select, textarea, label, [role='button'], .task-row")) return;
+    setTaskCards([]);
+  }
+
+  function openRootTask(task: Task): void {
+    setTaskCards([{ key: `task-${task.id}`, mode: "edit", taskId: task.id }]);
+  }
+
+  function openTaskDraft(): void {
+    const draft = taskDraft(view);
+    setTaskCards([{ key: draft.id, mode: "create-task", task: draft }]);
+  }
+
+  function openTaskCard(taskId: string): void {
+    setTaskCards((current) => {
+      const existingIndex = current.findIndex((card) =>
+        (card.mode === "edit" ? card.taskId : card.task.id) === taskId);
+      if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
+      return [...current, { key: `task-${taskId}`, mode: "edit", taskId }];
+    });
+  }
+
+  function openSubtaskDraft(parent: Task): void {
+    const draft = subtaskDraft(parent);
+    setTaskCards((current) => {
+      const parentIndex = current.findIndex((card) =>
+        card.mode === "edit" && card.taskId === parent.id);
+      const base = parentIndex >= 0 ? current.slice(0, parentIndex + 1) : current;
+      return [
+        ...base,
+        {
+          key: draft.id,
+          mode: "create-subtask",
+          task: draft,
+          parentTaskId: parent.id,
+        },
+      ];
+    });
+  }
+
+  function closeTopTaskCard(): void {
+    setTaskCards((current) => current.slice(0, -1));
+  }
+
+  function updateTaskEditorPlaceholder(
+    key: TaskEditorPlaceholderKey,
+    patch: Partial<(typeof taskEditorPlaceholders)[TaskEditorPlaceholderKey]>,
+  ): void {
+    setTaskEditorPlaceholders((current) => {
+      const next = { ...current, [key]: { ...current[key], ...patch } };
+      saveTaskEditorPlaceholders(next, window.localStorage);
+      return next;
+    });
+  }
 
   const loadData = useCallback(
     async (targetApi: LifeOSApi = api): Promise<void> => {
@@ -221,6 +342,13 @@ export function App(): ReactElement {
   }, []);
 
   useEffect(() => {
+    if (shouldCloseTaskOnViewChange(previousViewRef.current, view)) {
+      setTaskCards([]);
+    }
+    previousViewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
     if (
       !taskGroupsLoaded ||
       view !== "tasks" ||
@@ -249,7 +377,6 @@ export function App(): ReactElement {
     () => taskGroupNavigationItems(tasks, taskGroups),
     [taskGroups, tasks],
   );
-  const temperatureItems = useMemo(() => temperatureNavigationItems(tasks), [tasks]);
 
   function navigate(next: AppView, replace = false): void {
     const nextFilters = { ...emptyTaskFilters };
@@ -284,37 +411,9 @@ export function App(): ReactElement {
     );
   }
 
-  function navigateToTaskTemperature(
-    temperature: AppTaskFilters["temperature"],
-    nextFilters: AppTaskFilters = taskFiltersForTemperature(filters, temperature),
-  ): void {
-    if (
-      view === "tasks" &&
-      !shouldPushTaskTemperatureNavigation(
-        window.location.pathname,
-        window.location.search,
-        nextFilters.group,
-        filters.temperature,
-        temperature,
-      )
-    ) return;
-    const normalized = taskFiltersForTemperature(nextFilters, temperature);
-    setView("tasks");
-    setFilters(normalized);
-    window.history.pushState(
-      taskHistoryState(normalized, {}),
-      "",
-      taskGroupPath(normalized.group, temperature),
-    );
-  }
-
   function changeTaskFilters(nextFilters: AppTaskFilters): void {
     if (nextFilters.group !== filters.group) {
       navigateToTaskGroup(nextFilters.group, nextFilters);
-      return;
-    }
-    if (nextFilters.temperature !== filters.temperature) {
-      navigateToTaskTemperature(nextFilters.temperature, nextFilters);
       return;
     }
     setFilters(nextFilters);
@@ -342,23 +441,11 @@ export function App(): ReactElement {
     });
   }
 
-  async function addTask(input: CreateTask): Promise<void> {
-    try {
-      const created = await api.createTask(input);
-      setTasks((current) => [...current, created]);
-      if (belongsToToday(created)) setTodayTasks((current) => [...current, created]);
-      setToast("任务已添加");
-    } catch (reason) {
-      setToast(reason instanceof Error ? reason.message : "添加失败，内容已保留");
-      throw reason;
-    }
-  }
-
   async function inheritParentTask(task: Task): Promise<void> {
     try {
       const saved = await api.inheritParentTask(task.id, task.version);
       acceptExternalTask(saved);
-      setToast("已继承父任务的分组、标签与评分");
+      setToast("已继承父任务的分组与标签");
     } catch (reason) {
       setToast(reason instanceof Error ? reason.message : "继承失败，任务保持不变");
       throw reason;
@@ -453,6 +540,65 @@ export function App(): ReactElement {
       setTodayTasks(previousToday);
       throw reason;
     }
+  }
+
+  async function persistTaskCardUpdate(task: Task, patch: UpdateTask): Promise<void> {
+    const draftCard = taskCards.find((card) =>
+      card.mode !== "edit" && card.task.id === task.id);
+    if (!draftCard) {
+      await persistTaskUpdate(task, patch);
+      return;
+    }
+
+    const title = patch.title?.trim() ?? "";
+    if (draftCard.mode === "create-task") {
+      const saved = await api.createTask({
+        title,
+        temperature: "warm",
+        status: patch.status ?? "todo",
+        ...(patch.description ? { description: patch.description } : {}),
+        deadline: patch.deadline ?? null,
+        plannedDate: patch.plannedDate ?? null,
+        groupId: patch.groupId ?? null,
+        tags: patch.tags ?? [],
+      });
+      setTasks((current) => [...current, saved].sort((left, right) => left.rank - right.rank));
+      if (belongsToToday(saved)) {
+        setTodayTasks((current) => [...current, saved]
+          .sort((left, right) => left.rank - right.rank));
+      }
+      setToast("任务已创建");
+      return;
+    }
+    if (draftCard.mode !== "create-subtask") return;
+
+    const input: CreateSubtaskInput = {
+      title,
+      temperature: "warm",
+      ...(patch.description ? { description: patch.description } : {}),
+      deadline: patch.deadline ?? null,
+      plannedDate: patch.plannedDate ?? null,
+    };
+    let saved = await api.createSubtask(draftCard.parentTaskId, input);
+    const followUp: UpdateTask = {};
+    const status = patch.status ?? task.status;
+    const tags = patch.tags ?? task.tags;
+    const groupId = patch.groupId ?? task.groupId;
+    if (status !== saved.status) followUp.status = status;
+    if (groupId !== saved.groupId) followUp.groupId = groupId;
+    if (tags.join("\u0000") !== saved.tags.join("\u0000")) followUp.tags = tags;
+    if (Object.keys(followUp).length > 0) {
+      saved = await api.updateTask(saved.id, saved.version, followUp);
+    }
+    setTasks((current) => [...current.filter((item) => item.id !== saved.id), saved]
+      .sort((left, right) => left.rank - right.rank));
+    setTodayTasks((current) => {
+      const withoutSaved = current.filter((item) => item.id !== saved.id);
+      return belongsToToday(saved)
+        ? [...withoutSaved, saved].sort((left, right) => left.rank - right.rank)
+        : withoutSaved;
+    });
+    setToast("子任务已创建");
   }
 
   function setCompletionMotion(taskId: string, motion: TaskCompletionMotion | null): void {
@@ -727,30 +873,29 @@ export function App(): ReactElement {
     activeTaskCount: tasks.filter((task) => ["todo", "in_progress"].includes(task.status)).length,
     pendingCardCount,
     taskGroups: taskGroupItems,
-    temperatures: temperatureItems,
     selectedTaskGroup: selectedTaskGroupItem,
   };
   const shellActions: AppShellActions = {
     navigate,
     navigateToTaskGroup,
-    navigateToTaskTemperature,
     changeTaskFilters,
-    openAi: () => setAiOpen(true),
+    openAi: () => {
+      setTaskCards([]);
+      setAiOpen(true);
+    },
     openRules: () => setRulesOpen(true),
-    openTask: (task) => setSelectedTaskId(task.id),
+    openTask: openRootTask,
   };
   return (
-    <div className="app-shell">
+    <div className={`app-shell${workspaceRailVisible ? " has-workspace-rail" : ""}`}>
       <AppSidebarRenderer
         viewModel={shellViewModel}
         actions={shellActions}
         taskGroupsExpanded={taskGroupsExpanded}
-        temperaturesExpanded={temperaturesExpanded}
         onTaskGroupsExpandedChange={setTaskGroupsExpanded}
-        onTemperaturesExpandedChange={setTemperaturesExpanded}
       />
 
-      <main className="main-content">
+      <main className="main-content" onPointerDown={closeTaskFromWorkspaceBlank}>
         {(offline || demoMode) && loadState === "ready" && (
           <div className={`mode-banner ${offline ? "is-offline" : ""}`}>
             <span>{offline ? "当前离线：已加载的内容仍可查看" : "演示模式：操作会保存在这台设备"}</span>
@@ -776,20 +921,6 @@ export function App(): ReactElement {
                   onChange={(event) => navigateToTaskGroup(event.target.value)}
                 >
                   {taskGroupItems.map((item) => (
-                    <option value={item.id} key={item.id}>{item.label} · {item.count}</option>
-                  ))}
-                </select>
-              </label>
-              <label className={`mobile-task-facet-filter mobile-temperature-filter is-${filters.temperature}`}>
-                <i className={`sidebar-temperature-dot is-${filters.temperature}`} aria-hidden="true" />
-                <select
-                  aria-label="移动端温度"
-                  value={filters.temperature}
-                  onChange={(event) => navigateToTaskTemperature(
-                    event.target.value as AppTaskFilters["temperature"],
-                  )}
-                >
-                  {temperatureItems.map((item) => (
                     <option value={item.id} key={item.id}>{item.label} · {item.count}</option>
                   ))}
                 </select>
@@ -842,7 +973,7 @@ export function App(): ReactElement {
               filters={filters}
               tags={tags}
               onFiltersChange={changeTaskFilters}
-              onAdd={addTask}
+              onCreateTask={openTaskDraft}
               onCreateTaskGroup={createTaskGroup}
               onUpdateTaskGroup={updateTaskGroup}
               onUpdate={safeTaskUpdate}
@@ -866,7 +997,7 @@ export function App(): ReactElement {
             filters={filters}
             tags={tags}
             onFiltersChange={changeTaskFilters}
-            onAdd={addTask}
+            onCreateTask={openTaskDraft}
             onCreateTaskGroup={createTaskGroup}
             onUpdateTaskGroup={updateTaskGroup}
             onUpdate={safeTaskUpdate}
@@ -894,9 +1025,10 @@ export function App(): ReactElement {
           <GanttRenderer
             api={api}
             goals={goals}
-            taskRevision={tasks.map((task) => `${task.id}:${task.version}:${task.groupId ?? ""}`).join("|")}
+            taskRevision={tasks.map((task) => `${task.id}:${task.version}:${task.rank}:${task.groupId ?? ""}`).join("|")}
             onOpen={shellActions.openTask}
             onTaskSaved={acceptExternalTask}
+            onReorder={reorderTasks}
             onToast={setToast}
             onViewChange={(nextView: "calendar" | "gantt") => navigate(nextView)}
           />
@@ -929,6 +1061,41 @@ export function App(): ReactElement {
                 </span>
                 <i aria-hidden="true">›</i>
               </button>
+              <section className="placeholder-settings" aria-labelledby="placeholder-settings-title">
+                <header>
+                  <span className="settings-item-icon" aria-hidden="true">Aa</span>
+                  <div>
+                    <strong id="placeholder-settings-title">任务编辑默认填充</strong>
+                    <small>只提示输入内容，不会自动写入任务数据</small>
+                  </div>
+                </header>
+                <div className="placeholder-setting-list">
+                  {taskEditorPlaceholderSettings.map(({ key, label }) => {
+                    const option = taskEditorPlaceholders[key];
+                    return (
+                      <div className="placeholder-setting-row" key={key}>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={option.enabled}
+                          aria-label={`${label}默认填充：${option.enabled ? "已开启" : "已关闭"}`}
+                          className={`switch ${option.enabled ? "on" : ""}`}
+                          onClick={() => updateTaskEditorPlaceholder(key, { enabled: !option.enabled })}
+                        ><span /></button>
+                        <label htmlFor={`task-placeholder-${key}`}>{label}</label>
+                        <input
+                          id={`task-placeholder-${key}`}
+                          value={option.text}
+                          maxLength={120}
+                          disabled={!option.enabled}
+                          aria-label={`${label}默认填充文案`}
+                          onChange={(event) => updateTaskEditorPlaceholder(key, { text: event.target.value })}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
               <div className="settings-item settings-item-control">
                 <span className="settings-item-icon" aria-hidden="true">↪</span>
                 <label htmlFor="roll-forward-target-date">
@@ -952,6 +1119,54 @@ export function App(): ReactElement {
         )}
       </main>
 
+      {workspaceRailVisible && (
+        <aside className={`workspace-rail ${selectedTask ? "has-task" : "has-agent"} ${aiOpen ? "is-mobile-open" : ""}`}>
+          {selectedTask ? (
+            <div className="task-card-stack">
+              {resolvedTaskCards.map((card, index) => {
+                const active = index === resolvedTaskCards.length - 1;
+                return (
+                  <div className={`task-card-layer ${active ? "is-top" : ""}`} key={card.key}>
+                    <TaskDrawerRenderer
+                      task={card.task}
+                      mode={card.mode}
+                      active={active}
+                      presentation="rail"
+                      placeholders={taskEditorPlaceholders}
+                      api={api}
+                      taskGroups={taskGroups}
+                      onCreateTaskGroup={createTaskGroup}
+                      onClose={closeTopTaskCard}
+                      onSave={persistTaskCardUpdate}
+                      onOpenTask={openTaskCard}
+                      onCreateSubtask={openSubtaskDraft}
+                      onDismissAll={() => setTaskCards([])}
+                      allTasks={tasks}
+                      goals={goals}
+                      onStructureChanged={() => loadData(api)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <AiDrawerRenderer
+              open
+              presentation="rail"
+              cards={cards}
+              degraded={aiDegraded}
+              demoMode={demoMode}
+              generating={generatingSummary}
+              onClose={() => setAiOpen(false)}
+              onDecision={decideCard}
+              onDiscuss={beginDiscussion}
+              onSend={sendMessage}
+              onGenerate={generateSummary}
+            />
+          )}
+        </aside>
+      )}
+
       <nav className="mobile-nav" aria-label="移动端主导航">
         <button
           className={["tasks", "today", "review"].includes(view) ? "active" : ""}
@@ -974,19 +1189,31 @@ export function App(): ReactElement {
         </button>
       </nav>
 
-      <TaskDrawerRenderer
-        task={selectedTask}
-        api={api}
-        taskGroups={taskGroups}
-        onCreateTaskGroup={createTaskGroup}
-        onClose={() => setSelectedTaskId(null)}
-        onSave={persistTaskUpdate}
-        onOpenTask={setSelectedTaskId}
-        allTasks={tasks}
-        goals={goals}
-        onStructureChanged={() => loadData(api)}
-      />
-      <AiDrawerRenderer
+      {!workspaceRailVisible && resolvedTaskCards.map((card, index) => {
+        const active = index === resolvedTaskCards.length - 1;
+        return (
+          <div className={`task-overlay-card-layer ${active ? "is-top" : ""}`} key={card.key}>
+            <TaskDrawerRenderer
+              task={card.task}
+              mode={card.mode}
+              active={active}
+              placeholders={taskEditorPlaceholders}
+              api={api}
+              taskGroups={taskGroups}
+              onCreateTaskGroup={createTaskGroup}
+              onClose={closeTopTaskCard}
+              onSave={persistTaskCardUpdate}
+              onOpenTask={openTaskCard}
+              onCreateSubtask={openSubtaskDraft}
+              onDismissAll={() => setTaskCards([])}
+              allTasks={tasks}
+              goals={goals}
+              onStructureChanged={() => loadData(api)}
+            />
+          </div>
+        );
+      })}
+      {!workspaceRailVisible && <AiDrawerRenderer
         open={aiOpen}
         cards={cards}
         degraded={aiDegraded}
@@ -997,7 +1224,7 @@ export function App(): ReactElement {
         onDiscuss={beginDiscussion}
         onSend={sendMessage}
         onGenerate={generateSummary}
-      />
+      />}
       <RulesDrawerRenderer
         open={rulesOpen}
         rules={rules}

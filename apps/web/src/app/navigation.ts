@@ -4,7 +4,6 @@ import type {
   AppTaskFilters,
   AppView,
   TaskGroupNavigationItem,
-  TemperatureNavigationItem,
 } from "./contracts";
 
 export const emptyTaskFilters: AppTaskFilters = {
@@ -69,6 +68,10 @@ export function isViewsArea(view: AppView): boolean {
   return view === "calendar" || view === "gantt";
 }
 
+export function shouldCloseTaskOnViewChange(previous: AppView, next: AppView): boolean {
+  return previous !== next && isViewsArea(next);
+}
+
 export function taskGroupNavigationItems(
   tasks: readonly Pick<Task, "groupId">[],
   groups: readonly Pick<TaskGroup, "id" | "name" | "color">[],
@@ -94,43 +97,11 @@ export function taskGroupNavigationItems(
   ];
 }
 
-export function temperatureNavigationItems(
-  tasks: readonly Pick<Task, "temperature">[],
-): TemperatureNavigationItem[] {
-  const temperatures: readonly Exclude<AppTaskFilters["temperature"], "all">[] = [
-    "hot",
-    "warm",
-    "cold",
-    "inspiration",
-  ];
-  const labels: Record<Exclude<AppTaskFilters["temperature"], "all">, string> = {
-    hot: "热",
-    warm: "温",
-    cold: "冷",
-    inspiration: "灵感",
-  };
-  return [
-    { id: "all", label: "全部温度", count: tasks.length },
-    ...temperatures.map((temperature) => ({
-      id: temperature,
-      label: labels[temperature],
-      count: tasks.filter((task) => task.temperature === temperature).length,
-    })),
-  ];
-}
-
 export function taskFiltersForGroup(
   filters: AppTaskFilters,
   group: AppTaskFilters["group"],
 ): AppTaskFilters {
   return { ...filters, group };
-}
-
-export function taskFiltersForTemperature(
-  filters: AppTaskFilters,
-  temperature: AppTaskFilters["temperature"],
-): AppTaskFilters {
-  return { ...filters, temperature };
 }
 
 export function taskGroupFromLocation(
@@ -142,24 +113,22 @@ export function taskGroupFromLocation(
   return rawGroup && rawGroup !== "all" ? rawGroup : "all";
 }
 
-export function taskTemperatureFromLocation(
+function taskTemperatureFromLocation(
   pathname: string,
   search: string,
 ): AppTaskFilters["temperature"] {
-  if (pathname !== "/tasks") return "all";
-  const rawTemperature = new URLSearchParams(search).get("temperature")?.trim() ?? "all";
-  return taskFilterTemperatures.has(rawTemperature)
-    ? rawTemperature as AppTaskFilters["temperature"]
-    : "all";
+  void pathname;
+  void search;
+  return "all";
 }
 
 export function taskGroupPath(
   group: AppTaskFilters["group"],
   temperature: AppTaskFilters["temperature"] = "all",
 ): string {
+  void temperature;
   const search = new URLSearchParams();
   if (group !== "all") search.set("group", group);
-  if (temperature !== "all") search.set("temperature", temperature);
   const query = search.toString();
   return query ? `/tasks?${query}` : "/tasks";
 }
@@ -220,15 +189,4 @@ export function shouldPushTaskGroupNavigation(
 ): boolean {
   return currentGroup !== nextGroup ||
     `${pathname}${search}` !== taskGroupPath(nextGroup, temperature);
-}
-
-export function shouldPushTaskTemperatureNavigation(
-  pathname: string,
-  search: string,
-  group: AppTaskFilters["group"],
-  currentTemperature: AppTaskFilters["temperature"],
-  nextTemperature: AppTaskFilters["temperature"],
-): boolean {
-  return currentTemperature !== nextTemperature ||
-    `${pathname}${search}` !== taskGroupPath(group, nextTemperature);
 }

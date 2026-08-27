@@ -147,7 +147,6 @@ function normalizeEvent(value: unknown): TaskEvent {
   const eventType = String(raw.type ?? "task.updated");
   const fieldLabels: Record<string, string> = {
     title: "标题",
-    temperature: "温度",
     status: "状态",
     deadline: "Deadline",
     plannedDate: "计划日",
@@ -164,6 +163,8 @@ function normalizeEvent(value: unknown): TaskEvent {
         : `更新${fieldLabels[changedField ?? ""] ?? changedField ?? "任务"}`;
   return {
     id: String(raw.id),
+    batchId: String(raw.id),
+    type: eventType,
     taskId: String(raw.entityId ?? ""),
     field: changedField ?? eventType,
     oldValue: eventType === "task.created" ? null : before[changedField ?? ""] ?? null,

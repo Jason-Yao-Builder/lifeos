@@ -284,6 +284,8 @@ function projectTaskEvent(event: EventRecord) {
     const action = added ? '添加图片' : '删除图片';
     return [{
       id: event.id,
+      batchId: event.id,
+      type: event.type,
       taskId: event.aggregateId,
       field: 'image',
       oldValue: added ? null : fileName,
@@ -300,6 +302,8 @@ function projectTaskEvent(event: EventRecord) {
   const fields = changed.length > 0 ? changed : [event.type.split('.').at(-1) ?? 'change'];
   return fields.map((field, index) => ({
     id: fields.length === 1 ? event.id : `${event.id}:${index}`,
+    batchId: event.id,
+    type: event.type,
     taskId: event.aggregateId,
     field,
     oldValue: before[field] ?? null,

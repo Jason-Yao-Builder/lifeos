@@ -8,6 +8,7 @@ import {
   reorderSubtaskIds,
   reorderSubtaskIdsByKey,
   subtasksAfterLoad,
+  taskAncestorChain,
   TaskDrawer,
   TaskStructure,
   taskImageFileToBase64,
@@ -44,6 +45,7 @@ describe("dependencyCandidateOptions", () => {
     const first = task("task-duplicate-0001", "需求评审", { parentTaskId: parent.id });
     const second = task("task-duplicate-0002", "需求评审", { status: "in_progress" });
     const current = task("current-task", "当前任务");
+    const successor = task("successor-task", "已关联后置任务");
     const archived = task("archived-task", "旧任务", { status: "archived" });
     const linked: TaskDependency = {
       id: "dependency-1",
@@ -52,11 +54,18 @@ describe("dependencyCandidateOptions", () => {
       type: "finish_to_start",
       createdAt: "2026-08-24T00:00:00Z",
     };
+    const outgoing: TaskDependency = {
+      id: "dependency-2",
+      predecessorId: current.id,
+      successorId: successor.id,
+      type: "finish_to_start",
+      createdAt: "2026-08-24T00:00:00Z",
+    };
 
     const options = dependencyCandidateOptions(
       current.id,
-      [parent, first, second, current, archived],
-      [linked],
+      [parent, first, second, successor, current, archived],
+      [linked, outgoing],
     );
 
     expect(options.map(({ task: candidate }) => candidate.id)).toEqual([parent.id, first.id]);
@@ -77,7 +86,7 @@ describe("dependencyCandidateOptions", () => {
 });
 
 describe("TaskStructure", () => {
-  it("shows the exact inheritance note beside subtask creation", () => {
+  it("shows one action that opens the subtask editor", () => {
     const parent = task("parent", "父任务", {
       status: "in_progress",
       tags: ["项目"],
@@ -87,11 +96,23 @@ describe("TaskStructure", () => {
       api: {} as LifeOSApi,
       allTasks: [parent],
       onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
       onChanged: async () => undefined,
     }));
 
-    expect(html).toContain("添加一个子任务…");
-    expect(html).toContain("新子任务会继承当前任务的标签与状态，创建后可单独修改。");
+    expect(html).toContain("添加子任务");
+    expect(html).not.toContain("添加一个子任务…");
+    expect(html).not.toContain("新子任务会继承");
+    expect(html).toContain("依赖关系");
+    expect(html).toContain("前置任务");
+    expect(html).toContain("后置任务");
+    expect(html).not.toContain("前置依赖");
+    expect(html).toContain('aria-label="关联前置任务"');
+    expect(html).toContain('aria-label="关联后置任务"');
+    expect(html).not.toContain("没有前置任务");
+    expect(html).not.toContain("没有后置任务");
+    expect(html).not.toContain('id="dependency-search"');
+    expect(html).not.toContain('id="successor-search"');
   });
 
   it("shows known direct children on the first paint instead of a false empty state", () => {
@@ -104,6 +125,7 @@ describe("TaskStructure", () => {
       api: {} as LifeOSApi,
       allTasks: [parent, later, grandchild, first],
       onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
       onChanged: async () => undefined,
     }));
 
@@ -115,6 +137,33 @@ describe("TaskStructure", () => {
     expect(html).not.toContain("还没有子任务。");
   });
 
+  it("merges parent ancestry and children into one relationship card", () => {
+    const root = task("root", "顶层项目");
+    const middle = task("middle", "中层任务", { parentTaskId: root.id });
+    const current = task("current", "当前任务", { parentTaskId: middle.id });
+    const child = task("child", "直接子任务", { parentTaskId: current.id });
+    const allTasks = [child, current, root, middle];
+    const html = renderToStaticMarkup(createElement(TaskStructure, {
+      task: current,
+      api: {} as LifeOSApi,
+      allTasks,
+      onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
+      onChanged: async () => undefined,
+    }));
+
+    expect(taskAncestorChain(current, allTasks)).toEqual([root, middle]);
+    expect(html).toContain('aria-label="父子任务"');
+    expect(html).toContain("父任务");
+    expect(html).toContain("顶层项目");
+    expect(html).toContain("中层任务");
+    expect(html.indexOf("顶层项目")).toBeLessThan(html.indexOf("中层任务"));
+    expect(html).toContain("直接父任务");
+    expect(html).toContain("直接子任务");
+    expect(html.match(/parent-chain-arrow/g)).toHaveLength(2);
+    expect(html.match(/>↑<\/span>/g)).toHaveLength(2);
+  });
+
   it("labels an unknown initial list as loading rather than empty", () => {
     const parent = task("parent", "父任务");
     const html = renderToStaticMarkup(createElement(TaskStructure, {
@@ -122,6 +171,7 @@ describe("TaskStructure", () => {
       api: {} as LifeOSApi,
       allTasks: [parent],
       onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
       onChanged: async () => undefined,
     }));
 
@@ -138,11 +188,12 @@ describe("TaskStructure", () => {
       .toEqual([]);
   });
 
-  it("keeps a named parent return action above child details", () => {
+  it("opens child details without a redundant parent navigation strip", () => {
     const parent = task("parent", "季度发布计划");
-    const child = task("child", "准备发布说明", { parentTaskId: parent.id });
+    const child = task("child", "准备发布说明", { parentTaskId: parent.id, status: "in_progress" });
     const html = renderToStaticMarkup(createElement(TaskDrawer, {
       task: child,
+      presentation: "rail",
       api: {} as LifeOSApi,
       allTasks: [parent, child],
       goals: [],
@@ -164,14 +215,61 @@ describe("TaskStructure", () => {
       onClose: () => undefined,
       onSave: async () => undefined,
       onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
       onStructureChanged: async () => undefined,
     }));
 
-    expect(html).toContain("返回父任务：季度发布计划");
+    expect(html).not.toContain("返回父任务：季度发布计划");
+    expect(html).not.toContain('aria-label="父任务导航"');
     expect(html).toContain('data-slot="task-drawer"');
+    expect(html).toContain("drawer-embedded");
+    expect(html).toContain('placeholder="任务名称"');
+    expect(html).toContain('placeholder="描述"');
+    expect(html).toContain('placeholder="标签，逗号分隔。例如：个人成长，工作，编程"');
+    expect(html).toContain('aria-label="标签"');
+    expect(html).toContain('aria-label="上传图片"');
+    expect(html).toContain("截止日");
+    expect(html).toContain("计划完成日");
+    expect(html).toContain('<option value="todo">未开始</option>');
+    expect(html).not.toContain(">计划日</span>");
+    expect(html).not.toContain("设置后即硬任务");
+    expect(html).not.toContain("Deadline");
+    expect(html).not.toContain("关联目标");
+    expect(html).not.toContain("未关联目标");
     expect(html).toContain('aria-label="任务分组"');
     expect(html).toContain("产品迭代");
-    expect(html.indexOf("返回父任务：季度发布计划")).toBeLessThan(html.indexOf("详情"));
+  });
+
+  it("renders a focused subtask draft without editing tabs or live image uploads", () => {
+    const parent = task("parent", "父任务");
+    const draft = task("draft", "", { parentTaskId: parent.id });
+    const html = renderToStaticMarkup(createElement(TaskDrawer, {
+      task: draft,
+      mode: "create-subtask",
+      presentation: "rail",
+      api: {} as LifeOSApi,
+      allTasks: [parent],
+      goals: [],
+      taskGroups: [],
+      onCreateTaskGroup: async () => ({
+        id: "group-created",
+        workspaceId: "workspace",
+        name: "新分组",
+        color: "#2F6B52",
+        createdAt: "2026-08-24T00:00:00Z",
+        updatedAt: "2026-08-24T00:00:00Z",
+      }),
+      onClose: () => undefined,
+      onSave: async () => undefined,
+      onOpenTask: () => undefined,
+      onCreateSubtask: () => undefined,
+      onStructureChanged: async () => undefined,
+    }));
+
+    expect(html).toContain("新建子任务");
+    expect(html).toContain("创建子任务后可上传图片");
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain("返回父任务");
   });
 });
 

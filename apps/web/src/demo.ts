@@ -599,7 +599,7 @@ export function createDemoApi(): LifeOSApi {
         tags: next.tags,
         scoreDimensions: next.scoreDimensions,
         score: next.score,
-      }, "继承父任务的分组、标签与评分");
+      }, "继承父任务的分组与标签");
       store.tasks = store.tasks.map((task) => task.id === id ? next : task);
       saveStore(store);
       return pause(next, 120);

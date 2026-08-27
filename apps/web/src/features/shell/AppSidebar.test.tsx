@@ -23,16 +23,11 @@ const viewModel: AppSidebarViewModel = {
     { id: "all", label: "全部任务", color: null, count: 4 },
     { id: "group-work", label: "工作", color: "#217A5B", count: 3 },
   ],
-  temperatures: [
-    { id: "all", label: "全部温度", count: 4 },
-    { id: "hot", label: "热", count: 3 },
-  ],
 };
 
 const actions: AppSidebarActions = {
   navigate: vi.fn(),
   navigateToTaskGroup: vi.fn(),
-  changeTaskFilters: vi.fn(),
   openAi: vi.fn(),
 };
 
@@ -42,18 +37,15 @@ describe("AppSidebar", () => {
       viewModel,
       actions,
       taskGroupsExpanded: true,
-      temperaturesExpanded: true,
       onTaskGroupsExpandedChange: vi.fn(),
-      onTemperaturesExpandedChange: vi.fn(),
     }));
 
     expect(markup).toContain('<aside class="sidebar" data-slot="app-sidebar">');
     expect(markup).toContain('aria-label="主导航"');
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain('aria-label="任务分组"');
-    expect(markup).toContain('aria-label="温度分布"');
     expect(markup).toContain('aria-label="工作，3 项任务"');
-    expect(markup).toContain('aria-label="热，3 项任务"');
+    expect(markup).not.toContain("温度分布");
     expect(markup).toContain("已连接私有服务");
   });
 });

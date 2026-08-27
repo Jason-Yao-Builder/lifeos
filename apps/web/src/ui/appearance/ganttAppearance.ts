@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { GanttTask, TaskGroup, Temperature } from "../../types";
+import type { GanttTask, TaskGroup } from "../../types";
 
 export type GanttColorStyle = CSSProperties & {
   "--task-group-color"?: string;
@@ -8,20 +8,6 @@ export type GanttColorStyle = CSSProperties & {
   "--task-group-progress"?: string;
   "--gantt-preview-fill"?: string;
   "--gantt-preview-border"?: string;
-};
-
-const temperatureFills: Record<Temperature, string> = {
-  hot: "#f3cfc9",
-  warm: "#f2dfb4",
-  cold: "#d7e6ed",
-  inspiration: "#e5dcef",
-};
-
-const temperatureBorders: Record<Temperature, string> = {
-  hot: "#c87869",
-  warm: "#af873d",
-  cold: "#7197a8",
-  inspiration: "#9276a9",
 };
 
 export function lightGroupFill(color: string): string {
@@ -78,14 +64,13 @@ export function ganttGroupAccessibleLabel(group: Pick<TaskGroup, "name" | "color
 }
 
 export function ganttTaskAppearance(
-  task: Pick<GanttTask, "groupId" | "temperature" | "progress" | "isBlocked">,
+  task: Pick<GanttTask, "groupId" | "progress" | "isBlocked">,
   groups: readonly TaskGroup[],
   options: { preview?: boolean; critical?: boolean } = {},
 ): { className: string; style: GanttColorStyle; group: TaskGroup | null } {
   const group = task.groupId ? groups.find((candidate) => candidate.id === task.groupId) ?? null : null;
   const className = [
     options.preview ? "gantt-drag-preview" : "gantt-bar",
-    group ? "" : `temperature-${task.temperature}`,
     group ? "gantt-group-colored" : "",
     options.critical ? "is-critical" : "",
     task.isBlocked ? "is-blocked" : "",
@@ -101,16 +86,13 @@ export function ganttTaskAppearance(
         background: gradient,
       }
     : options.preview
-      ? {
-          "--gantt-preview-fill": temperatureFills[task.temperature],
-          "--gantt-preview-border": temperatureBorders[task.temperature],
-        }
+      ? { "--gantt-preview-fill": "#e4e9e5", "--gantt-preview-border": "#839188" }
       : {};
   return { className, style, group };
 }
 
 export function ganttPreviewAppearance(
-  task: Pick<GanttTask, "id" | "groupId" | "temperature" | "progress" | "isBlocked">,
+  task: Pick<GanttTask, "id" | "groupId" | "progress" | "isBlocked">,
   groups: readonly TaskGroup[],
   criticalTaskIds: ReadonlySet<string>,
 ) {

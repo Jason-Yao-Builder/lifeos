@@ -6,9 +6,7 @@ import type {
   AppTaskFilters,
   AppView,
   TaskGroupNavigationItem,
-  TemperatureNavigationItem,
 } from "../../app/contracts";
-import { taskFiltersForTemperature } from "../../app/navigation";
 
 type SidebarGroupStyle = CSSProperties & { "--sidebar-group-color"?: string };
 
@@ -23,21 +21,18 @@ export type AppSidebarViewModel = Pick<
   | "activeTaskCount"
   | "pendingCardCount"
   | "taskGroups"
-  | "temperatures"
 >;
 
 export type AppSidebarActions = Pick<
   AppShellActions,
-  "navigate" | "navigateToTaskGroup" | "changeTaskFilters" | "openAi"
+  "navigate" | "navigateToTaskGroup" | "openAi"
 >;
 
 export interface AppSidebarProps {
   viewModel: AppSidebarViewModel;
   actions: AppSidebarActions;
   taskGroupsExpanded: boolean;
-  temperaturesExpanded: boolean;
   onTaskGroupsExpandedChange(expanded: boolean): void;
-  onTemperaturesExpandedChange(expanded: boolean): void;
 }
 
 export function TaskGroupSidebar({
@@ -97,56 +92,6 @@ export function TaskGroupSidebar({
   );
 }
 
-export function TemperatureSidebar({
-  items,
-  selected,
-  expanded,
-  onToggle,
-  onSelect,
-}: {
-  items: readonly TemperatureNavigationItem[];
-  selected: AppTaskFilters["temperature"];
-  expanded: boolean;
-  onToggle: () => void;
-  onSelect: (temperature: AppTaskFilters["temperature"]) => void;
-}): ReactElement {
-  return (
-    <section className="sidebar-task-groups sidebar-temperatures" aria-label="温度分布">
-      <button
-        type="button"
-        className="sidebar-task-groups-toggle"
-        aria-expanded={expanded}
-        aria-controls="sidebar-temperature-list"
-        onClick={onToggle}
-      >
-        <span>温度分布</span>
-        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-      </button>
-      {expanded && (
-        <div id="sidebar-temperature-list" className="sidebar-task-group-list" role="group" aria-label="按温度筛选">
-          {items.map((item) => {
-            const active = selected === item.id;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={`sidebar-task-group-link sidebar-temperature-link is-${item.id} ${active ? "active" : ""}`}
-                aria-label={`${item.label}，${item.count} 项任务`}
-                aria-pressed={active}
-                onClick={() => onSelect(item.id)}
-              >
-                <i className={`sidebar-temperature-dot is-${item.id}`} aria-hidden="true" />
-                <span>{item.label}</span>
-                <small>{item.count}</small>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function taskAreaActive(view: AppView): boolean {
   return ["tasks", "today", "review"].includes(view);
 }
@@ -155,9 +100,7 @@ export function AppSidebar({
   viewModel,
   actions,
   taskGroupsExpanded,
-  temperaturesExpanded,
   onTaskGroupsExpandedChange,
-  onTemperaturesExpandedChange,
 }: AppSidebarProps): ReactElement {
   const taskActive = taskAreaActive(viewModel.view);
   return (
@@ -216,15 +159,6 @@ export function AppSidebar({
         expanded={taskGroupsExpanded}
         onToggle={() => onTaskGroupsExpandedChange(!taskGroupsExpanded)}
         onSelect={actions.navigateToTaskGroup}
-      />
-      <TemperatureSidebar
-        items={viewModel.temperatures}
-        selected={viewModel.filters.temperature}
-        expanded={temperaturesExpanded}
-        onToggle={() => onTemperaturesExpandedChange(!temperaturesExpanded)}
-        onSelect={(temperature) => actions.changeTaskFilters(
-          taskFiltersForTemperature(viewModel.filters, temperature),
-        )}
       />
       <div className="sidebar-foot">
         <span className="avatar">Y</span>

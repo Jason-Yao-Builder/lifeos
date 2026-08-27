@@ -8,6 +8,7 @@ import type {
   ReactNode,
 } from "react";
 import type { LifeOSApi } from "./api";
+import { defaultTaskEditorPlaceholders } from "./app/preferences";
 import { CoachIcon } from "./Icons";
 import { TaskGroupCreator } from "./TaskBoard";
 import type {
@@ -16,16 +17,15 @@ import type {
   TaskDependency,
   TaskImage,
   TaskStatus,
-  Temperature,
 } from "./types";
 import {
   cardTypeLabels,
+  mergeTags,
   openDatePicker,
   readableValue,
   relativeTime,
   statusLabels,
   statusTransitions,
-  temperatureLabels,
 } from "./utils";
 import { reorderTaskIds, taskDropPosition, taskTreeRows } from "./v02-utils";
 import type { TaskDropPosition } from "./v02-utils";
@@ -36,8 +36,9 @@ import type {
   TaskStructureProps,
 } from "./features/drawers/contracts";
 import {
+  projectTaskHistory,
   projectTaskStructure,
-  taskParent,
+  taskHistoryBatchTitle,
 } from "./features/drawers/model";
 import { useTaskDrawerController } from "./features/drawers/useTaskDrawerController";
 import { useTaskStructureController } from "./features/drawers/useTaskStructureController";
@@ -51,39 +52,44 @@ export type {
 
 interface DrawerShellProps {
   open: boolean;
+  active?: boolean;
   title: string;
   slot: "task-drawer" | "ai-drawer" | "rules-drawer";
   eyebrow?: string;
   wide?: boolean;
+  presentation?: "overlay" | "rail";
   onClose: () => void;
+  onDismissAll?: () => void;
   children: ReactNode;
 }
 
 function DrawerShell({
   open,
+  active = true,
   title,
   slot,
   eyebrow,
   wide,
+  presentation = "overlay",
   onClose,
+  onDismissAll,
   children,
 }: DrawerShellProps): ReactElement | null {
   useEffect(() => {
-    if (!open) return;
+    if (!open || !active) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, open]);
+  }, [active, onClose, open]);
 
   if (!open) return null;
-  return (
-    <div className="drawer-layer" role="presentation">
-      <button className="drawer-backdrop" aria-label="关闭抽屉" onClick={onClose} />
+  const content = (
       <aside
-        className={`drawer ${wide ? "drawer-wide" : ""}`}
+        className={`drawer ${wide ? "drawer-wide" : ""} ${presentation === "rail" ? "drawer-embedded" : ""}`}
         aria-label={title}
+        aria-hidden={active ? undefined : true}
         data-slot={slot}
       >
         <header className="drawer-header">
@@ -95,6 +101,12 @@ function DrawerShell({
         </header>
         {children}
       </aside>
+  );
+  if (presentation === "rail") return content;
+  return (
+    <div className="drawer-layer" role="presentation">
+      <button className="drawer-backdrop" aria-label="关闭抽屉" onClick={onDismissAll ?? onClose} />
+      {content}
     </div>
   );
 }
@@ -158,7 +170,7 @@ export interface DependencyCandidateOption {
 
 export type SubtaskReorderKey = "ArrowUp" | "ArrowDown" | "Home" | "End";
 
-export { knownDirectSubtasks, subtasksAfterLoad } from "./features/drawers/model";
+export { knownDirectSubtasks, subtasksAfterLoad, taskAncestorChain } from "./features/drawers/model";
 
 export function reorderSubtaskIds(
   orderedIds: readonly string[],
@@ -220,9 +232,11 @@ export function dependencyCandidateOptions(
   query = "",
 ): DependencyCandidateOption[] {
   const linkedIds = new Set(
-    dependencies
-      .filter((dependency) => dependency.successorId === currentTaskId)
-      .map((dependency) => dependency.predecessorId),
+    dependencies.flatMap((dependency) => {
+      if (dependency.successorId === currentTaskId) return [dependency.predecessorId];
+      if (dependency.predecessorId === currentTaskId) return [dependency.successorId];
+      return [];
+    }),
   );
   const ancestorsById = new Map(
     taskTreeRows(tasks).map((row) => [row.task.id, row.ancestorTitles]),
@@ -281,11 +295,13 @@ function DescriptionImagesEditor({
   task,
   api,
   value,
+  placeholder,
   onChange,
 }: {
   task: Task;
   api: LifeOSApi;
   value: string;
+  placeholder: string;
   onChange: (value: string) => void;
 }): ReactElement {
   const [images, setImages] = useState<TaskImage[]>([]);
@@ -382,7 +398,7 @@ function DescriptionImagesEditor({
     void uploadFiles(files);
   }
 
-  function droppedImages(event: ReactDragEvent<HTMLDivElement>): void {
+  function droppedImages(event: ReactDragEvent<HTMLElement>): void {
     event.preventDefault();
     setDragActive(false);
     void uploadFiles(Array.from(event.dataTransfer.files));
@@ -406,64 +422,63 @@ function DescriptionImagesEditor({
 
   const unavailable = loadState !== "ready" || uploading;
   return (
-    <>
-      <div className="field field-full">
-        <label htmlFor={`task-description-${task.id}`}>描述</label>
-        <textarea
-          id={`task-description-${task.id}`}
-          rows={5}
-          value={value}
-          placeholder="补充背景、完成标准或下一步…"
-          onChange={(event) => onChange(event.target.value)}
-          onPaste={pastedImages}
+    <section
+      className={`description-editor${dragActive ? " is-drag-active" : ""}`}
+      aria-label="描述与图片"
+      onDragEnter={(event) => {
+        event.preventDefault();
+        if (!unavailable) setDragActive(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setDragActive(false);
+        }
+      }}
+      onDrop={droppedImages}
+    >
+      <label className="sr-only" htmlFor={`task-description-${task.id}`}>描述</label>
+      <textarea
+        id={`task-description-${task.id}`}
+        rows={6}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        onPaste={pastedImages}
+      />
+      {dragActive && <div className="description-editor-drop-hint">松开以上传图片</div>}
+      <div className="description-editor-toolbar">
+        <span>{uploading ? "上传中…" : `${images.length}/${TASK_IMAGE_MAX_COUNT}`}</span>
+        <button
+          type="button"
+          className="description-image-trigger"
+          aria-label="上传图片"
+          title="上传图片"
+          disabled={unavailable || images.length >= TASK_IMAGE_MAX_COUNT}
+          onClick={() => fileInput.current?.click()}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="4" width="17" height="16" rx="3" />
+            <circle cx="9" cy="9.5" r="1.5" />
+            <path d="m5.5 17 4.2-4 3.1 2.8 2.4-2.3 3.3 3.5" />
+          </svg>
+        </button>
+        <input
+          ref={fileInput}
+          className="description-images-input"
+          type="file"
+          accept={TASK_IMAGE_ACCEPT}
+          multiple
+          aria-label="选择描述图片"
+          disabled={unavailable || images.length >= TASK_IMAGE_MAX_COUNT}
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            void uploadFiles(files);
+          }}
         />
       </div>
-      <section className="description-images" aria-label="描述图片附件">
-        <div className="description-images-header">
-          <div>
-            <strong>图片附件</strong>
-            <span>{images.length}/{TASK_IMAGE_MAX_COUNT}</span>
-          </div>
-          <button
-            type="button"
-            className="description-images-add"
-            disabled={unavailable || images.length >= TASK_IMAGE_MAX_COUNT}
-            onClick={() => fileInput.current?.click()}
-          >{uploading ? "上传中…" : "+ 选择图片"}</button>
-          <input
-            ref={fileInput}
-            className="description-images-input"
-            type="file"
-            accept={TASK_IMAGE_ACCEPT}
-            multiple
-            aria-label="选择描述图片"
-            disabled={unavailable || images.length >= TASK_IMAGE_MAX_COUNT}
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              void uploadFiles(files);
-            }}
-          />
-        </div>
-        <div
-          className={`description-images-dropzone${dragActive ? " description-images-dropzone-active" : ""}`}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            if (!unavailable) setDragActive(true);
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={(event) => {
-            const nextTarget = event.relatedTarget;
-            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
-              setDragActive(false);
-            }
-          }}
-          onDrop={droppedImages}
-        >
-          <span aria-hidden="true">⇧</span>
-          <p>拖入图片，或在上方描述框内粘贴</p>
-          <small>支持 PNG、JPEG、WebP、GIF · 单图≤5MB</small>
-        </div>
         {loadState === "loading" && <p className="description-images-status">正在读取图片…</p>}
         {loadState === "error" && (
           <button
@@ -500,12 +515,48 @@ function DescriptionImagesEditor({
           </div>
         )}
         {operationError && <p className="description-images-error" role="alert">{operationError}</p>}
-      </section>
-    </>
+      <small className="description-editor-help">拖入或粘贴 PNG、JPEG、WebP、GIF · 单图≤5MB</small>
+    </section>
   );
 }
 
-export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, goals, taskGroups, onCreateTaskGroup, onStructureChanged }: TaskDrawerProps): ReactElement | null {
+function DraftDescriptionEditor({
+  task,
+  value,
+  placeholder,
+  onChange,
+}: {
+  task: Task;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}): ReactElement {
+  return (
+    <section className="description-editor" aria-label="描述与图片">
+      <label className="sr-only" htmlFor={`task-description-${task.id}`}>描述</label>
+      <textarea
+        id={`task-description-${task.id}`}
+        rows={6}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <div className="description-editor-toolbar">
+        <span>0/{TASK_IMAGE_MAX_COUNT}</span>
+        <button type="button" className="description-image-trigger" aria-label="创建后可上传图片" disabled>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="4" width="17" height="16" rx="3" />
+            <circle cx="9" cy="9.5" r="1.5" />
+            <path d="m5.5 17 4.2-4 3.1 2.8 2.4-2.3 3.3 3.5" />
+          </svg>
+        </button>
+      </div>
+      <small className="description-editor-help">创建子任务后可上传图片</small>
+    </section>
+  );
+}
+
+export function TaskDrawer({ task, mode = "edit", active = true, presentation = "overlay", placeholders = defaultTaskEditorPlaceholders, api, onClose, onSave, onOpenTask, onCreateSubtask, onDismissAll, allTasks, taskGroups, onCreateTaskGroup, onStructureChanged }: TaskDrawerProps): ReactElement | null {
   const { viewModel, actions } = useTaskDrawerController({ task, api, onSave, onClose });
   const {
     tab,
@@ -521,55 +572,42 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
     setTab,
     patchDraft,
     setTagInput,
-    commitTags,
-    removeTag,
     setGroupCreatorOpen,
     submit,
   } = actions;
-
-  function handleTagKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
-    if (event.nativeEvent.isComposing) return;
-    if (["Enter", ",", "，"].includes(event.key)) {
-      event.preventDefault();
-      commitTags();
-    }
-  }
+  const [historyQuery, setHistoryQuery] = useState("");
+  useEffect(() => setHistoryQuery(""), [task?.id]);
+  const allHistoryBatches = useMemo(() => projectTaskHistory(history), [history]);
+  const historyBatches = useMemo(
+    () => projectTaskHistory(history, historyQuery),
+    [history, historyQuery],
+  );
+  const historyCount = allHistoryBatches.reduce(
+    (total, batch) => total + batch.events.length,
+    0,
+  );
+  const matchedHistoryCount = historyBatches.reduce(
+    (total, batch) => total + batch.events.length,
+    0,
+  );
 
   function submitForm(event: FormEvent): void {
     event.preventDefault();
     void submit();
   }
 
-  const drawerParentTask = taskParent(task, allTasks);
-
   return (
     <DrawerShell
       open={Boolean(task)}
-      title={task?.title ?? "任务详情"}
+      active={active}
+      title={mode === "create-task" ? "新建任务" : mode === "create-subtask" ? "新建子任务" : "编辑任务"}
       slot="task-drawer"
-      eyebrow="任务档案"
       wide
+      presentation={presentation}
       onClose={onClose}
+      {...(onDismissAll ? { onDismissAll } : {})}
     >
-      {task?.parentTaskId && (
-        <div className="task-parent-return" aria-label="父任务导航">
-          {drawerParentTask ? (
-            <button
-              type="button"
-              onClick={() => {
-                setTab("structure");
-                onOpenTask(drawerParentTask.id);
-              }}
-            >
-              <span aria-hidden="true">←</span>
-              返回父任务：{drawerParentTask.title}
-            </button>
-          ) : (
-            <span>父任务暂不可用</span>
-          )}
-        </div>
-      )}
-      <div className="drawer-tabs" role="tablist">
+      {mode === "edit" && <div className="drawer-tabs" role="tablist">
         <button
           type="button"
           role="tab"
@@ -597,39 +635,37 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
         >
           变更历史
         </button>
-      </div>
+      </div>}
       {tab === "details" ? (
         <form className="drawer-body detail-form" onSubmit={submitForm}>
-          <label className="field field-full">
-            <span>任务名称</span>
+          <label className="field field-full task-title-field">
+            <span className="sr-only">任务名称</span>
             <input
+              aria-label="任务名称"
+              placeholder={placeholders.title.enabled ? placeholders.title.text : ""}
               value={draft.title ?? ""}
               onChange={(event) => patchDraft({ title: event.target.value })}
             />
           </label>
-          {task && (
+          {task && mode === "edit" && (
             <DescriptionImagesEditor
               key={task.id}
               task={task}
               api={api}
               value={draft.description ?? ""}
+              placeholder={placeholders.description.enabled ? placeholders.description.text : ""}
+              onChange={(description) => patchDraft({ description })}
+            />
+          )}
+          {task && mode !== "edit" && (
+            <DraftDescriptionEditor
+              task={task}
+              value={draft.description ?? ""}
+              placeholder={placeholders.description.enabled ? placeholders.description.text : ""}
               onChange={(description) => patchDraft({ description })}
             />
           )}
           <div className="field-grid">
-            <label className="field">
-              <span>温度</span>
-              <select
-                value={draft.temperature ?? "warm"}
-                onChange={(event) =>
-                  patchDraft({ temperature: event.target.value as Temperature })
-                }
-              >
-                {Object.entries(temperatureLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
             <label className="field">
               <span>状态</span>
               <select
@@ -638,7 +674,11 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                   patchDraft({ status: event.target.value as TaskStatus })
                 }
               >
-                {task && [task.status, ...statusTransitions[task.status]].map((value) => (
+                {task && Array.from(new Set([
+                  task.status,
+                  "todo" as TaskStatus,
+                  ...statusTransitions[task.status],
+                ])).map((value) => (
                   <option key={value} value={value}>{statusLabels[value]}</option>
                 ))}
               </select>
@@ -657,7 +697,7 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                 }
               }}
             >
-              <span>Deadline <small>设置后即硬任务</small></span>
+              <span>截止日</span>
               <input
                 type="date"
                 value={draft.deadline ?? ""}
@@ -678,28 +718,12 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
                 }
               }}
             >
-              <span>计划日</span>
+              <span>计划完成日</span>
               <input
                 type="date"
                 value={draft.plannedDate ?? ""}
                 onChange={(event) => patchDraft({ plannedDate: event.target.value || null })}
               />
-            </label>
-            <label className="field">
-              <span>综合分</span>
-              <input value={task?.score ?? "待评估"} disabled />
-            </label>
-            <label className="field">
-              <span>关联目标</span>
-              <select
-                value={draft.goalId ?? ""}
-                onChange={(event) => patchDraft({ goalId: event.target.value || null })}
-              >
-                <option value="">未关联目标</option>
-                {goals.filter((goal) => goal.status === "active").map((goal) => (
-                  <option value={goal.id} key={goal.id}>{goal.title}</option>
-                ))}
-              </select>
             </label>
             <div className="field field-full detail-group-control">
               <span>任务分组</span>
@@ -736,45 +760,29 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
               )}
             </div>
           </div>
-          <div className="field field-full tag-field">
-            <span>标签 <small>可连续添加，最多 50 个</small></span>
-            {(draft.tags ?? []).length > 0 && (
-              <div className="tag-chips" aria-label="已添加标签">
-                {(draft.tags ?? []).map((tag) => (
-                  <span className="tag-chip" key={tag}>
-                    #{tag}
-                    <button
-                      type="button"
-                      aria-label={`移除标签 ${tag}`}
-                      onClick={() => removeTag(tag)}
-                    >×</button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="tag-entry">
-              <input
-                aria-label="添加标签"
-                value={tagInput}
-                maxLength={50}
-                disabled={(draft.tags ?? []).length >= 50}
-                placeholder="输入标签后按 Enter，例如：个人成长"
-                onChange={(event) => setTagInput(event.target.value)}
-                onKeyDown={handleTagKeyDown}
-              />
-              <button
-                type="button"
-                className="button button-secondary"
-                disabled={!tagInput.trim() || (draft.tags ?? []).length >= 50}
-                onClick={commitTags}
-              >添加</button>
-            </div>
-          </div>
+          <label className="field field-full tag-text-field">
+            <span className="sr-only">标签</span>
+            <input
+              aria-label="标签"
+              value={tagInput}
+              maxLength={2000}
+              placeholder={placeholders.tags.enabled ? placeholders.tags.text : ""}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.preventDefault();
+              }}
+              onChange={(event) => {
+                const value = event.target.value;
+                setTagInput(value);
+                patchDraft({ tags: mergeTags([], value) });
+              }}
+            />
+            <small>{(draft.tags ?? []).length}/50</small>
+          </label>
           {error && <div className="inline-error" role="alert">{error}</div>}
           <footer className="drawer-footer">
             <button type="button" className="button button-secondary" onClick={onClose}>取消</button>
             <button type="submit" className="button button-primary" disabled={saving}>
-              {saving ? "保存中…" : "保存更改"}
+              {saving ? "保存中…" : mode === "create-task" ? "创建任务" : mode === "create-subtask" ? "创建子任务" : "保存更改"}
             </button>
           </footer>
         </form>
@@ -788,10 +796,35 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
             setTab(targetTab);
             onOpenTask(taskId);
           }}
+          onCreateSubtask={onCreateSubtask}
           onChanged={onStructureChanged}
         />
       ) : (
         <div className="drawer-body history-panel">
+          <div className="history-search">
+            <label>
+              <span className="sr-only">搜索变更历史</span>
+              <input
+                type="search"
+                value={historyQuery}
+                aria-label="搜索变更历史"
+                placeholder="搜索关键词，或输入 key:status"
+                onChange={(event) => setHistoryQuery(event.target.value)}
+              />
+              {historyQuery && (
+                <button
+                  type="button"
+                  aria-label="清除历史搜索"
+                  onClick={() => setHistoryQuery("")}
+                >×</button>
+              )}
+            </label>
+            <span>
+              {historyQuery
+                ? `${matchedHistoryCount} / ${historyCount} 条匹配`
+                : `${allHistoryBatches.length} 次保存 · ${historyCount} 条变更`}
+            </span>
+          </div>
           {historyState === "loading" && (
             <div className="history-loading">
               <span /><span /><span />
@@ -800,25 +833,38 @@ export function TaskDrawer({ task, api, onClose, onSave, onOpenTask, allTasks, g
           {historyState === "error" && (
             <div className="inline-error">历史记录暂时无法读取，切换页签后可重试。</div>
           )}
-          {historyState === "idle" && history.length === 0 && (
+          {historyState === "idle" && historyBatches.length === 0 && (
             <div className="mini-empty">
               <span>◌</span>
-              <p>还没有变更记录</p>
+              <p>{historyQuery ? "没有匹配的变更" : "还没有变更记录"}</p>
             </div>
           )}
-          {history.map((event) => (
-            <article className="history-event" key={event.id}>
-              <span className={`actor-dot actor-${event.actor}`} />
-              <div>
-                <strong>{event.summary}</strong>
-                <p>
-                  {readableValue(event.oldValue)}
-                  <span aria-hidden="true"> → </span>
-                  {readableValue(event.newValue)}
-                </p>
-                <small>{event.actor === "user" ? "你" : event.actor === "ai" ? "AI" : "规则"} · {relativeTime(event.createdAt)}</small>
+          {historyBatches.map((batch) => (
+            <section className="history-batch" key={batch.id}>
+              <header>
+                <span className={`actor-dot actor-${batch.actor}`} />
+                <div>
+                  <strong>{taskHistoryBatchTitle(batch.type)}</strong>
+                  <small>
+                    {batch.actor === "user" ? "你" : batch.actor === "ai" ? "AI" : "规则"}
+                    {" · "}{relativeTime(batch.createdAt)}
+                  </small>
+                </div>
+                <b>{historyQuery ? `${batch.events.length}/${batch.totalCount}` : batch.totalCount} 项</b>
+              </header>
+              <div className="history-batch-events">
+                {batch.events.map((event) => (
+                  <article className="history-event" key={event.id}>
+                    <code>{event.field}</code>
+                    <p>
+                      {readableValue(event.oldValue)}
+                      <span aria-hidden="true"> → </span>
+                      {readableValue(event.newValue)}
+                    </p>
+                  </article>
+                ))}
               </div>
-            </article>
+            </section>
           ))}
         </div>
       )}
@@ -831,6 +877,7 @@ export function TaskStructure({
   api,
   allTasks,
   onOpenTask,
+  onCreateSubtask,
   onChanged,
 }: TaskStructureProps): ReactElement {
   const { viewState, actions } = useTaskStructureController({ task, api, allTasks, onChanged });
@@ -847,18 +894,23 @@ export function TaskStructure({
   } = viewState;
   const {
     clearError,
-    addSubtask,
     persistSubtaskOrder,
     addDependency,
+    addSuccessor,
     removeDependency,
     createRepeat,
     generateRepeat,
   } = actions;
-  const [subtaskTitle, setSubtaskTitle] = useState("");
   const [predecessorId, setPredecessorId] = useState("");
   const [dependencyQuery, setDependencyQuery] = useState("");
+  const [dependencyEditorOpen, setDependencyEditorOpen] = useState(false);
   const [dependencyOpen, setDependencyOpen] = useState(false);
   const [activeDependencyIndex, setActiveDependencyIndex] = useState(0);
+  const [successorId, setSuccessorId] = useState("");
+  const [successorQuery, setSuccessorQuery] = useState("");
+  const [successorEditorOpen, setSuccessorEditorOpen] = useState(false);
+  const [successorOpen, setSuccessorOpen] = useState(false);
+  const [activeSuccessorIndex, setActiveSuccessorIndex] = useState(0);
   const [cronExpr, setCronExpr] = useState("0 9 * * 1");
   const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
   const [subtaskDropTarget, setSubtaskDropTarget] = useState<{
@@ -869,8 +921,14 @@ export function TaskStructure({
   useEffect(() => {
     setPredecessorId("");
     setDependencyQuery("");
+    setDependencyEditorOpen(false);
     setDependencyOpen(false);
     setActiveDependencyIndex(0);
+    setSuccessorId("");
+    setSuccessorQuery("");
+    setSuccessorEditorOpen(false);
+    setSuccessorOpen(false);
+    setActiveSuccessorIndex(0);
   }, [task.id]);
 
   function handleSubtaskKeyboard(
@@ -950,8 +1008,9 @@ export function TaskStructure({
   ]);
   const {
     depth,
-    parentTask,
+    ancestorTasks,
     incomingDependencies,
+    outgoingDependencies,
     relatedTemplate,
     canReorderSubtasks,
     canCreateSubtask,
@@ -963,23 +1022,56 @@ export function TaskStructure({
   );
   const visibleDependencyIndex = activeDependencyIndex < candidateOptions.length ? activeDependencyIndex : 0;
   const activeDependency = candidateOptions[visibleDependencyIndex];
+  const successorOptions = useMemo(
+    () => dependencyCandidateOptions(task.id, allTasks, dependencies, successorQuery),
+    [allTasks, dependencies, successorQuery, task.id],
+  );
+  const visibleSuccessorIndex = activeSuccessorIndex < successorOptions.length
+    ? activeSuccessorIndex
+    : 0;
+  const activeSuccessor = successorOptions[visibleSuccessorIndex];
   const cronError = cronExpressionError(cronExpr);
-
-  async function submitSubtask(): Promise<void> {
-    if (await addSubtask(subtaskTitle)) setSubtaskTitle("");
-  }
 
   async function linkDependency(): Promise<void> {
     if (!(await addDependency(predecessorId))) return;
     setPredecessorId("");
     setDependencyQuery("");
+    setDependencyEditorOpen(false);
     setDependencyOpen(false);
+  }
+
+  async function linkSuccessor(): Promise<void> {
+    if (!(await addSuccessor(successorId))) return;
+    setSuccessorId("");
+    setSuccessorQuery("");
+    setSuccessorEditorOpen(false);
+    setSuccessorOpen(false);
+  }
+
+  function toggleDependencyEditor(): void {
+    const nextOpen = !dependencyEditorOpen;
+    setDependencyEditorOpen(nextOpen);
+    setDependencyOpen(nextOpen);
+    if (nextOpen) setActiveDependencyIndex(0);
+  }
+
+  function toggleSuccessorEditor(): void {
+    const nextOpen = !successorEditorOpen;
+    setSuccessorEditorOpen(nextOpen);
+    setSuccessorOpen(nextOpen);
+    if (nextOpen) setActiveSuccessorIndex(0);
   }
 
   function chooseDependency(option: DependencyCandidateOption): void {
     setPredecessorId(option.task.id);
     setDependencyQuery(option.label);
     setDependencyOpen(false);
+  }
+
+  function chooseSuccessor(option: DependencyCandidateOption): void {
+    setSuccessorId(option.task.id);
+    setSuccessorQuery(option.label);
+    setSuccessorOpen(false);
   }
 
   function handleDependencyKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
@@ -1001,34 +1093,77 @@ export function TaskStructure({
       return dependencyOpen ? (current - 1 + candidateOptions.length) % candidateOptions.length : candidateOptions.length - 1;
     });
   }
+
+  function handleSuccessorKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape") {
+      setSuccessorOpen(false);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+    if (successorOptions.length === 0) return;
+    event.preventDefault();
+    if (event.key === "Enter") {
+      if (successorOpen) chooseSuccessor(successorOptions[visibleSuccessorIndex]!);
+      return;
+    }
+    setSuccessorOpen(true);
+    setActiveSuccessorIndex((current) => {
+      if (event.key === "ArrowDown") {
+        return successorOpen ? (current + 1) % successorOptions.length : 0;
+      }
+      return successorOpen
+        ? (current - 1 + successorOptions.length) % successorOptions.length
+        : successorOptions.length - 1;
+    });
+  }
   return (
     <div className="drawer-body structure-panel">
       {error && <div className="inline-error">{error}</div>}
-      <section className="structure-section" aria-label="任务归属">
-        <header>
-          <div>
-            <h3>任务归属</h3>
-            <p>在父子任务之间切换，不改变任务状态。</p>
-          </div>
-          {parentTask ? (
-            <button
-              type="button"
-              className="button button-secondary"
-              aria-label={`打开父任务 ${parentTask.title}`}
-              onClick={() => onOpenTask(parentTask.id, "structure")}
-            >
-              隶属于：{parentTask.title}
-            </button>
+      <section className="structure-section structure-family-section" aria-label="父子任务">
+        <div className="structure-parent-block">
+          <header>
+            <div>
+              <h3>父任务</h3>
+              <p>从顶层到直接父任务，逐层展示归属链路。</p>
+            </div>
+          </header>
+          {ancestorTasks.length > 0 ? (
+            <div className="parent-chain" aria-label="父任务链路">
+              {ancestorTasks.map((ancestor, index) => {
+                const isRoot = index === 0;
+                const isDirect = index === ancestorTasks.length - 1;
+                const relation = [
+                  isRoot ? "顶层任务" : `第 ${index + 1} 层父任务`,
+                  isDirect ? "直接父任务" : "",
+                ].filter(Boolean).join(" · ");
+                return (
+                  <button
+                    type="button"
+                    className="parent-chain-item"
+                    key={ancestor.id}
+                    aria-label={`打开父任务 ${ancestor.title}`}
+                    onClick={() => onOpenTask(ancestor.id, "structure")}
+                  >
+                    <span className="parent-chain-arrow" aria-hidden="true">↑</span>
+                    <strong>{ancestor.title}</strong>
+                    <small>{relation}</small>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
-            <strong>{task.parentTaskId ? "隶属于：父任务暂不可用" : "隶属于：顶层任务"}</strong>
+            <p className="parent-chain-empty">
+              {task.parentTaskId ? "父任务暂不可用" : "当前任务为顶层任务"}
+            </p>
           )}
-        </header>
-      </section>
-      <section className="structure-section">
-        <header>
+        </div>
+        <div className="structure-subtasks-block">
+          <header>
           <div><h3>子任务</h3><p>当前层级 {depth} / 3</p></div>
           <strong>{progressPercent}%</strong>
-        </header>
+          </header>
         <div className="progress-track"><i style={{ width: `${progressPercent}%` }} /></div>
         <div
           className="subtask-list"
@@ -1080,21 +1215,41 @@ export function TaskStructure({
                 >⋮⋮</button>
                 <span aria-hidden="true">{item.status === "completed" ? "✓" : "○"}</span>
                 <strong>{item.title}</strong>
-                <small>{temperatureLabels[item.temperature]}</small>
+                <small>{statusLabels[item.status]}</small>
               </div>
             );
           })}
         </div>
         <p className="sr-only" role="status" aria-live="polite">{reorderNotice}</p>
-        {canCreateSubtask ? <><div className="structure-add"><input value={subtaskTitle} placeholder="添加一个子任务…" onChange={(event) => setSubtaskTitle(event.target.value)} /><button className="button button-secondary" disabled={busy || reordering || !subtaskTitle.trim()} onClick={() => void submitSubtask()}>添加</button></div><p className="muted">新子任务会继承当前任务的标签与状态，创建后可单独修改。</p></> : <p className="structure-limit">已到达 3 层上限，请在现有层级中继续拆解。</p>}
+        {canCreateSubtask ? (
+          <button
+            type="button"
+            className="button button-secondary structure-create-subtask"
+            disabled={busy || reordering}
+            onClick={() => onCreateSubtask(task)}
+          >添加子任务</button>
+        ) : <p className="structure-limit">已到达 3 层上限，请在现有层级中继续拆解。</p>}
+        </div>
       </section>
-      <section className="structure-section"><header><div><h3>前置依赖</h3><p>前置未完成时，任务会被阻塞。</p></div>{task.isBlocked && <strong className="blocked-label">🔒 已阻塞</strong>}</header>
-        <div className="dependency-list">{incomingDependencies.length === 0 ? <p className="muted">没有前置任务。</p> : incomingDependencies.map((item) => {
-          const predecessor = allTasks.find((candidate) => candidate.id === item.predecessorId);
-          const presentation = predecessor ? dependencyCandidateOption(predecessor, allTasks) : null;
-          return <div key={item.id}><span>←</span><span><strong>{predecessor?.title ?? "未知任务"}</strong>{presentation && <small>{presentation.ancestorPath ? `隶属 ${presentation.ancestorPath} · ` : ""}{presentation.statusLabel} · #{presentation.shortId}</small>}</span><button type="button" aria-label={`删除前置依赖 ${predecessor?.title ?? "未知任务"}`} disabled={busy} onClick={() => void removeDependency(item.id)}>×</button></div>;
-        })}</div>
-        <div className="structure-add dependency-add">
+      <section className="structure-section dependency-relations">
+        <header><div><h3>依赖关系</h3><p>一条关联同时定义前置与后置方向。</p></div>{task.isBlocked && <strong className="blocked-label">🔒 已阻塞</strong>}</header>
+        <div className="dependency-direction">
+          <div className="dependency-direction-title">
+            <h4>前置任务</h4>
+            <button
+              type="button"
+              className="button button-secondary dependency-link-toggle"
+              aria-label={dependencyEditorOpen ? "收起前置任务关联" : "关联前置任务"}
+              aria-expanded={dependencyEditorOpen}
+              onClick={toggleDependencyEditor}
+            >{dependencyEditorOpen ? "收起" : "关联"}</button>
+          </div>
+          {incomingDependencies.length > 0 && <div className="dependency-list">{incomingDependencies.map((item) => {
+            const predecessor = allTasks.find((candidate) => candidate.id === item.predecessorId);
+            const presentation = predecessor ? dependencyCandidateOption(predecessor, allTasks) : null;
+            return <div key={item.id}><span>←</span><span><strong>{predecessor?.title ?? "未知任务"}</strong>{presentation && <small>{presentation.ancestorPath ? `隶属 ${presentation.ancestorPath} · ` : ""}{presentation.statusLabel} · #{presentation.shortId}</small>}</span><button type="button" aria-label={`删除前置任务 ${predecessor?.title ?? "未知任务"}`} disabled={busy} onClick={() => void removeDependency(item.id)}>×</button></div>;
+          })}</div>}
+          {dependencyEditorOpen && <div className="structure-add dependency-add">
           <div
             className="dependency-combobox"
             onBlur={(event) => {
@@ -1146,6 +1301,77 @@ export function TaskStructure({
             )}
           </div>
           <button type="button" className="button button-secondary" disabled={busy || !predecessorId} onClick={() => void linkDependency()}>关联</button>
+          </div>}
+        </div>
+        <div className="dependency-direction">
+          <div className="dependency-direction-title">
+            <h4>后置任务</h4>
+            <button
+              type="button"
+              className="button button-secondary dependency-link-toggle"
+              aria-label={successorEditorOpen ? "收起后置任务关联" : "关联后置任务"}
+              aria-expanded={successorEditorOpen}
+              onClick={toggleSuccessorEditor}
+            >{successorEditorOpen ? "收起" : "关联"}</button>
+          </div>
+          {outgoingDependencies.length > 0 && <div className="dependency-list">{outgoingDependencies.map((item) => {
+            const successor = allTasks.find((candidate) => candidate.id === item.successorId);
+            const presentation = successor ? dependencyCandidateOption(successor, allTasks) : null;
+            return <div key={item.id}><span>→</span><span><strong>{successor?.title ?? "未知任务"}</strong>{presentation && <small>{presentation.ancestorPath ? `隶属 ${presentation.ancestorPath} · ` : ""}{presentation.statusLabel} · #{presentation.shortId}</small>}</span><button type="button" aria-label={`删除后置任务 ${successor?.title ?? "未知任务"}`} disabled={busy} onClick={() => void removeDependency(item.id)}>×</button></div>;
+          })}</div>}
+          {successorEditorOpen && <div className="structure-add dependency-add">
+            <div
+              className="dependency-combobox"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setSuccessorOpen(false);
+              }}
+            >
+              <label className="sr-only" htmlFor="successor-search">搜索后置任务</label>
+              <input
+                id="successor-search"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={successorOpen}
+                aria-controls="successor-options"
+                aria-activedescendant={successorOpen && activeSuccessor ? `successor-option-${visibleSuccessorIndex}` : undefined}
+                autoComplete="off"
+                value={successorQuery}
+                placeholder="输入标题、父链、状态或任务 ID…"
+                onFocus={() => {
+                  setSuccessorOpen(true);
+                  setActiveSuccessorIndex(0);
+                }}
+                onChange={(event) => {
+                  setSuccessorQuery(event.target.value);
+                  setSuccessorId("");
+                  setSuccessorOpen(true);
+                  setActiveSuccessorIndex(0);
+                }}
+                onKeyDown={handleSuccessorKeyDown}
+              />
+              {successorOpen && (
+                <div className="dependency-options" id="successor-options" role="listbox" aria-label="可选后置任务">
+                  {successorOptions.length === 0 ? <div className="dependency-empty" role="option" aria-disabled="true">没有匹配的可关联任务</div> : successorOptions.map((option, index) => (
+                    <button
+                      type="button"
+                      id={`successor-option-${index}`}
+                      role="option"
+                      aria-selected={option.task.id === successorId}
+                      className={index === visibleSuccessorIndex ? "is-active" : ""}
+                      key={option.task.id}
+                      tabIndex={-1}
+                      onMouseMove={() => setActiveSuccessorIndex(index)}
+                      onClick={() => chooseSuccessor(option)}
+                    >
+                      <strong>{option.task.title}</strong>
+                      <small>{option.ancestorPath ? `隶属 ${option.ancestorPath}` : "顶层任务"} · {option.statusLabel} · #{option.shortId}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button type="button" className="button button-secondary" disabled={busy || !successorId} onClick={() => void linkSuccessor()}>关联</button>
+          </div>}
         </div>
       </section>
       <section className="structure-section"><header><div><h3>重复计划</h3><p>模板只负责生成实例，不改写历史任务。</p></div></header>
@@ -1197,6 +1423,7 @@ export function TaskStructure({
 
 export function AiDrawer({
   open,
+  presentation = "overlay",
   cards,
   degraded,
   demoMode,
@@ -1243,6 +1470,7 @@ export function AiDrawer({
       slot="ai-drawer"
       eyebrow={selected ? "与这张卡继续聊" : "人做最终决定"}
       wide
+      presentation={presentation}
       onClose={selected ? () => setSelectedId(null) : onClose}
     >
       {selected ? (

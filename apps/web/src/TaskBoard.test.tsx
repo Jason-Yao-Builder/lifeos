@@ -3,20 +3,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   buildTaskGroupUpdatePatch,
-  buildQuickTaskInput,
   claimParentInheritance,
-  createScoreEditorState,
-  createScoreDimensionDraft,
   matchesTaskGroupFilter,
-  normalizeScoreDimensionDraft,
   normalizeTaskGroupColor,
-  parseScoreDimensionDraftValue,
   TaskBoard,
   taskCompletionMotionDuration,
+  taskGroupDisplayName,
 } from "./TaskBoard";
 import type { TaskBoardRenderers, TaskCompletionMotion, TaskFilters } from "./TaskBoard";
 import type { Task, TaskGroup } from "./types";
-import { calculateCompositeScore, todayKey } from "./utils";
+import { todayKey } from "./utils";
 
 const unscoredTask: Task = {
   id: "task-unscored",
@@ -57,7 +53,7 @@ function renderBoard(
       tags={[]}
       onViewChange={() => undefined}
       onFiltersChange={() => undefined}
-      onAdd={async () => undefined}
+      onCreateTask={() => undefined}
       onCreateTaskGroup={async (input) => ({
         id: "created-group",
         workspaceId: "workspace",
@@ -134,81 +130,21 @@ describe("TaskBoard parent inheritance action", () => {
   });
 });
 
-describe("TaskBoard score control", () => {
-  it("defaults an unscored child to its parent's dimensions", () => {
-    const parent = { impact: 80, urgency: 70, alignment: 60, effort: 40 };
-
-    expect(createScoreEditorState(null, parent)).toEqual({
-      draft: parent,
-      inheritsParent: true,
-    });
-  });
-
-  it("recognizes stored inherited values but preserves a custom child score", () => {
-    const parent = { impact: 80, urgency: 70, alignment: 60, effort: 40 };
-    const custom = { impact: 50, urgency: 50, alignment: 50, effort: 50 };
-
-    expect(createScoreEditorState({ ...parent }, parent).inheritsParent).toBe(true);
-    expect(createScoreEditorState(custom, parent)).toEqual({
-      draft: custom,
-      inheritsParent: false,
-    });
-  });
-
-  it("falls back to the child's own score when its parent has no dimensions", () => {
-    const child = { impact: 65, urgency: 55, alignment: 45, effort: 35 };
-
-    expect(createScoreEditorState(child, null)).toEqual({
-      draft: child,
-      inheritsParent: false,
-    });
-  });
-
-  it("keeps an emptied score field blank so retyping 30 does not produce 030", () => {
-    const initial = createScoreDimensionDraft({
-      impact: 50,
-      urgency: 60,
-      alignment: 70,
-      effort: 80,
-    });
-    const emptied = { ...initial, impact: parseScoreDimensionDraftValue("", Number.NaN) };
-    const retyped = { ...emptied, impact: parseScoreDimensionDraftValue("30", 30) };
-
-    expect(emptied.impact).toBe("");
-    expect(retyped.impact).toBe(30);
-    expect(normalizeScoreDimensionDraft(emptied)).toBeNull();
-    expect(calculateCompositeScore(normalizeScoreDimensionDraft(retyped)!)).toBe(50.5);
-  });
-
-  it("clamps non-empty draft values to numeric 0–100 dimensions", () => {
-    const normalized = normalizeScoreDimensionDraft({
-      impact: parseScoreDimensionDraftValue("25", 25),
-      urgency: parseScoreDimensionDraftValue("125", 125),
-      alignment: parseScoreDimensionDraftValue("-4", -4),
-      effort: parseScoreDimensionDraftValue("35.5", 35.5),
-    });
-
-    expect(normalized).toEqual({ impact: 25, urgency: 100, alignment: 0, effort: 35.5 });
-    expect(Object.values(normalized ?? {}).every((value) => typeof value === "number")).toBe(true);
-  });
-
-  it("renders an Enter-only multi-tag entry in the basic quick-create card", () => {
+describe("TaskBoard simplified task controls", () => {
+  it("replaces the quick-create card with one new-task button", () => {
     const html = renderBoard([]);
 
-    expect(html).toContain('aria-label="新任务标签"');
-    expect(html).toContain('aria-label="添加新任务标签"');
-    expect(html).toContain("输入标签后按 Enter 添加");
-    const quickTagEntry = html.match(/<div class="quick-tag-entry">([\s\S]*?)<\/div>/)?.[1] ?? "";
-    expect(quickTagEntry).not.toContain("<button");
-    expect(html).toContain("0/50");
+    expect(html).toContain('class="create-task-button"');
+    expect(html).toContain('aria-label="新建任务"');
+    expect(html).not.toContain('class="quick-add');
+    expect(html).not.toContain('aria-label="新任务标签"');
   });
 
-  it("renders a null score as an accessible manual-score button", () => {
+  it("does not render retired score controls", () => {
     const html = renderBoard([unscoredTask]);
 
-    expect(html).toMatch(/<button[^>]*class="score score-button"[^>]*>—<\/button>/);
-    expect(html).toContain("未评分任务的综合分未生成，点击人工调整");
-    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('class="score');
+    expect(html).not.toContain("综合分");
   });
 
   it("renders grouped tasks in rank order even when children belong to different parents", () => {
@@ -287,7 +223,7 @@ describe("TaskBoard score control", () => {
     expect(childMarkup).toContain('class="task-lineage-actions"');
     expect(childMarkup).toContain('aria-label="收起中间子任务的子任务"');
     expect(childMarkup).toContain(
-      'aria-label="从父任务继承中间子任务的分组、标签与评分"',
+      'aria-label="从父任务继承中间子任务的分组与标签"',
     );
     expect(childMarkup).toMatch(/class="task-inherit-parent"[^>]*draggable="false"/);
     expect(summaryEnd).toBeLessThan(actionStart);
@@ -304,9 +240,9 @@ describe("TaskBoard score control", () => {
     const html = renderBoard([child], "tasks", {}, [], "all", [child]);
 
     expect(html).toContain(
-      'aria-label="从父任务继承暂缺父记录的子任务的分组、标签与评分"',
+      'aria-label="从父任务继承暂缺父记录的子任务的分组与标签"',
     );
-    expect(html).toContain('title="同步父任务当前的分组、标签与评分"');
+    expect(html).toContain('title="同步父任务当前的分组与标签"');
   });
 });
 
@@ -320,6 +256,21 @@ describe("TaskBoard task groups", () => {
     updatedAt: "2026-08-24T08:00:00.000Z",
   };
 
+  it("shows up to eight group characters and keeps the full name accessible", () => {
+    expect(taskGroupDisplayName("一二三四五六七八")).toBe("一二三四五六七八");
+    expect(taskGroupDisplayName("一二三四五六七八九")).toBe("一二三四五六七八…");
+
+    const longGroup = { ...group, name: "一二三四五六七八九" };
+    const html = renderBoard(
+      [{ ...unscoredTask, groupId: longGroup.id }],
+      "tasks",
+      {},
+      [longGroup],
+    );
+    expect(html).toContain('aria-label="按分组筛选：一二三四五六七八九"');
+    expect(html).toContain("<b>一二三四五六七八…</b>");
+  });
+
   it("matches all, ungrouped and a concrete group independently of other filters", () => {
     const grouped = { ...unscoredTask, groupId: group.id };
     const ungrouped = { ...unscoredTask, id: "ungrouped", groupId: null };
@@ -330,7 +281,7 @@ describe("TaskBoard task groups", () => {
     expect(matchesTaskGroupFilter(ungrouped, "ungrouped")).toBe(true);
   });
 
-  it("intersects the temperature and task-group filters", () => {
+  it("ignores retired temperature filters and applies the task-group filter", () => {
     const hotGrouped = { ...unscoredTask, title: "热区分组任务", temperature: "hot" as const, groupId: group.id };
     const warmGrouped = { ...unscoredTask, id: "warm-grouped", title: "温区分组任务", groupId: group.id };
     const hotUngrouped = { ...unscoredTask, id: "hot-ungrouped", title: "热区未分组任务", temperature: "hot" as const };
@@ -338,7 +289,7 @@ describe("TaskBoard task groups", () => {
     const html = renderBoard(tasks, "tasks", {}, [group], group.id, tasks, "hot");
 
     expect(html).toContain("热区分组任务");
-    expect(html).not.toContain("温区分组任务");
+    expect(html).toContain("温区分组任务");
     expect(html).not.toContain("热区未分组任务");
   });
 
@@ -362,7 +313,7 @@ describe("TaskBoard task groups", () => {
 
     expect(html).not.toContain('aria-label="按分组筛选"');
     expect(html).not.toContain('aria-label="按温度筛选"');
-    expect(html).toContain('aria-label="新任务分组"');
+    expect(html).toContain('aria-label="新建任务"');
     expect(summary).toContain('aria-label="打开任务详情：未评分任务"');
     expect(summary).toMatch(/class="task-summary-open"[^>]*><\/button>/);
     expect(summary).toMatch(/class="task-group-marker"[^>]*aria-label="按分组筛选：产品迭代"[^>]*draggable="false"/);
@@ -379,7 +330,6 @@ describe("TaskBoard task groups", () => {
     expect(html).toContain("保存分组");
     expect(html).not.toContain("保存颜色");
     expect(html).toContain('--task-group-color:#2F6B52');
-    expect(html).toContain("未分组");
   });
 
   it("keeps the reorder handle operable only when no filter changes list scope", () => {
@@ -447,7 +397,7 @@ describe("TaskBoard task groups", () => {
     expect(titleRule).toContain("text-overflow: ellipsis");
     expect(markerRule).toContain("flex: 0 0 auto");
     expect(styles).toContain('.drag-handle[aria-disabled="true"]');
-    expect(styles).toMatch(/@media \(max-width: 830px\)[\s\S]*?\.task-group-marker \{ max-width: 70px;/);
+    expect(styles).toMatch(/@media \(max-width: 830px\)[\s\S]*?\.task-group-marker \{ max-width: 88px;/);
   });
 
   it("normalizes valid colors and rejects shorthand or unsafe values", () => {
@@ -493,77 +443,5 @@ describe("TaskBoard overdue queue", () => {
     expect(html).toContain("已逾期");
     expect(html).toContain("一键顺延");
     expect(html).toContain("1项逾期任务一键顺延至");
-  });
-});
-
-describe("TaskBoard quick-create payload", () => {
-  it.each([
-    ["tasks", null],
-    ["today", todayKey()],
-  ] as const)("includes the description without changing tags or manual scoring in %s", (view, plannedDate) => {
-    const scoreDimensions = { impact: 80, urgency: 70, alignment: 60, effort: 40 };
-
-    expect(buildQuickTaskInput(view, {
-      title: "  新任务  ",
-      description: "  背景与完成标准  ",
-      temperature: "warm",
-      deadline: "2026-08-31",
-      groupId: "group-product",
-      tags: ["既有标签"],
-      tagInput: "尾标签",
-      manualScore: true,
-      scoreDimensions,
-    })).toEqual({
-      title: "新任务",
-      description: "背景与完成标准",
-      temperature: "warm",
-      deadline: "2026-08-31",
-      plannedDate,
-      groupId: "group-product",
-      tags: ["既有标签", "尾标签"],
-      scoreDimensions,
-    });
-  });
-
-  it("keeps automatic scoring implicit", () => {
-    const input = buildQuickTaskInput("tasks", {
-      title: "新任务",
-      description: "",
-      temperature: "cold",
-      deadline: "",
-      groupId: "",
-      tags: [],
-      tagInput: "",
-      manualScore: false,
-      scoreDimensions: { impact: 50, urgency: 50, alignment: 50, effort: 50 },
-    });
-
-    expect(input).toMatchObject({ description: "", tags: [], deadline: null, groupId: null });
-    expect(input).not.toHaveProperty("scoreDimensions");
-  });
-
-  it("keeps a completed manual draft numeric in the create payload", () => {
-    const scoreDimensions = normalizeScoreDimensionDraft({
-      impact: parseScoreDimensionDraftValue("25", 25),
-      urgency: parseScoreDimensionDraftValue("120", 120),
-      alignment: parseScoreDimensionDraftValue("30", 30),
-      effort: parseScoreDimensionDraftValue("-5", -5),
-    });
-    expect(scoreDimensions).not.toBeNull();
-    const input = buildQuickTaskInput("tasks", {
-      title: "手动评分任务",
-      description: "",
-      temperature: "warm",
-      deadline: "",
-      groupId: "",
-      tags: [],
-      tagInput: "",
-      manualScore: true,
-      scoreDimensions: scoreDimensions!,
-    });
-
-    expect(input.scoreDimensions).toEqual({ impact: 25, urgency: 100, alignment: 30, effort: 0 });
-    expect(Object.values(input.scoreDimensions ?? {}).every((value) => typeof value === "number"))
-      .toBe(true);
   });
 });

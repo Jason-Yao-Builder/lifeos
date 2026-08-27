@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadRollForwardDate, saveRollForwardDate, validRollForwardDate } from "./preferences";
+import {
+  defaultTaskEditorPlaceholders,
+  loadRollForwardDate,
+  loadTaskEditorPlaceholders,
+  saveRollForwardDate,
+  saveTaskEditorPlaceholders,
+  validRollForwardDate,
+} from "./preferences";
 
 describe("roll-forward preference", () => {
   it("defaults and clamps stale or invalid dates to today", () => {
@@ -14,5 +21,32 @@ describe("roll-forward preference", () => {
     const setItem = vi.fn();
     saveRollForwardDate("2026-08-29", { setItem });
     expect(setItem).toHaveBeenCalledWith("lifeos.rollForwardTargetDate", "2026-08-29");
+  });
+});
+
+describe("task editor placeholder preference", () => {
+  it("falls back safely and preserves per-field text and switches", () => {
+    expect(loadTaskEditorPlaceholders()).toEqual(defaultTaskEditorPlaceholders);
+    expect(loadTaskEditorPlaceholders({ getItem: () => "invalid json" }))
+      .toEqual(defaultTaskEditorPlaceholders);
+    expect(loadTaskEditorPlaceholders({
+      getItem: () => JSON.stringify({
+        title: { enabled: false, text: "写下任务" },
+        tags: { enabled: true, text: "逗号分隔" },
+      }),
+    })).toEqual({
+      title: { enabled: false, text: "写下任务" },
+      description: defaultTaskEditorPlaceholders.description,
+      tags: { enabled: true, text: "逗号分隔" },
+    });
+  });
+
+  it("saves one preference payload", () => {
+    const setItem = vi.fn();
+    saveTaskEditorPlaceholders(defaultTaskEditorPlaceholders, { setItem });
+    expect(setItem).toHaveBeenCalledWith(
+      "lifeos.taskEditorPlaceholders",
+      JSON.stringify(defaultTaskEditorPlaceholders),
+    );
   });
 });

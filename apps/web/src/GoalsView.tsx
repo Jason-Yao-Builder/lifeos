@@ -225,7 +225,7 @@ function GoalPanel({
         <div className="goal-status-actions">
           {(["active", "completed", "abandoned"] as GoalStatus[]).map((status) => <button className={goal.status === status ? "active" : ""} key={status} onClick={() => void onStatus(goal, status)}>{statusLabels[status]}</button>)}
         </div>
-        <section className="goal-task-list"><h3>关联任务</h3>{tasks.length === 0 ? <p className="muted">还没有任务关联到这个目标。</p> : tasks.map((task) => <button key={task.id} onClick={() => onOpenTask(task)}><span>{task.status === "completed" ? "✓" : "○"}</span><strong>{task.title}</strong><small>{task.score ?? "—"}</small></button>)}</section>
+        <section className="goal-task-list"><h3>关联任务</h3>{tasks.length === 0 ? <p className="muted">还没有任务关联到这个目标。</p> : tasks.map((task) => <button key={task.id} onClick={() => onOpenTask(task)}><span>{task.status === "completed" ? "✓" : "○"}</span><strong>{task.title}</strong></button>)}</section>
         <footer className="goal-panel-footer"><button className="text-button danger" onClick={() => void onDelete(goal)}>归档目标</button></footer>
       </aside>
     </div>

@@ -1,4 +1,4 @@
-import type { Task, TaskGroup, TaskScoreDimensions } from "../../types";
+import type { Task, TaskGroup } from "../../types";
 import type { TaskCompletionMotion, TaskBoardProps, TaskFilters } from "./contracts";
 import type { TaskQueueGroupKey, TaskTreeRow } from "../../v02-utils";
 import {
@@ -9,59 +9,6 @@ import {
   taskTreeRows,
   visibleTaskTreeRows,
 } from "../../v02-utils";
-import {
-  clampScoreDimension,
-  mergeTags,
-  todayKey,
-} from "../../utils";
-
-export const defaultScoreDimensions: TaskScoreDimensions = {
-  impact: 50,
-  urgency: 50,
-  alignment: 50,
-  effort: 50,
-};
-
-export const scoreDimensionFields: ReadonlyArray<{
-  key: keyof TaskScoreDimensions;
-  label: string;
-  hint: string;
-}> = [
-  { key: "impact", label: "影响力", hint: "对结果的影响" },
-  { key: "urgency", label: "紧迫度", hint: "时间压力" },
-  { key: "alignment", label: "方向一致性", hint: "与长期方向一致" },
-  { key: "effort", label: "精力成本", hint: "仅作元数据，不参与评分" },
-];
-
-export type ScoreDimensionDraft = {
-  [Key in keyof TaskScoreDimensions]: number | "";
-};
-
-export function sameScoreDimensions(
-  left: TaskScoreDimensions | null | undefined,
-  right: TaskScoreDimensions,
-): boolean {
-  return Boolean(left) && scoreDimensionFields.every(({ key }) => left?.[key] === right[key]);
-}
-
-export function createScoreDimensionDraft(
-  dimensions: TaskScoreDimensions,
-): ScoreDimensionDraft {
-  return { ...dimensions };
-}
-
-export function createScoreEditorState(
-  taskDimensions: TaskScoreDimensions | null | undefined,
-  parentDimensions: TaskScoreDimensions | null | undefined,
-): { draft: ScoreDimensionDraft; inheritsParent: boolean } {
-  const inheritsParent = parentDimensions !== null && parentDimensions !== undefined && (
-    !taskDimensions || sameScoreDimensions(taskDimensions, parentDimensions)
-  );
-  const dimensions = inheritsParent && parentDimensions
-    ? parentDimensions
-    : taskDimensions ?? defaultScoreDimensions;
-  return { draft: createScoreDimensionDraft(dimensions), inheritsParent };
-}
 
 export function claimParentInheritance(
   parentTaskId: string | null | undefined,
@@ -72,58 +19,6 @@ export function claimParentInheritance(
   return true;
 }
 
-export function parseScoreDimensionDraftValue(
-  rawValue: string,
-  valueAsNumber: number,
-): number | "" {
-  return rawValue === "" ? "" : clampScoreDimension(valueAsNumber);
-}
-
-export function normalizeScoreDimensionDraft(
-  draft: ScoreDimensionDraft,
-): TaskScoreDimensions | null {
-  if (
-    draft.impact === "" ||
-    draft.urgency === "" ||
-    draft.alignment === "" ||
-    draft.effort === ""
-  ) return null;
-  return {
-    impact: draft.impact,
-    urgency: draft.urgency,
-    alignment: draft.alignment,
-    effort: draft.effort,
-  };
-}
-
-export interface QuickAddDraft {
-  title: string;
-  description: string;
-  temperature: Task["temperature"];
-  deadline: string;
-  groupId: string;
-  tags: string[];
-  tagInput: string;
-  manualScore: boolean;
-  scoreDimensions: TaskScoreDimensions;
-}
-
-export function buildQuickTaskInput(
-  view: TaskBoardProps["view"],
-  draft: QuickAddDraft,
-): Parameters<TaskBoardProps["onAdd"]>[0] {
-  return {
-    title: draft.title.trim(),
-    description: draft.description.trim(),
-    temperature: draft.temperature,
-    deadline: draft.deadline || null,
-    plannedDate: view === "today" ? todayKey() : null,
-    groupId: draft.groupId || null,
-    tags: mergeTags(draft.tags, draft.tagInput),
-    ...(draft.manualScore ? { scoreDimensions: draft.scoreDimensions } : {}),
-  };
-}
-
 export const taskGroupColorPresets = [
   "#2F6B52",
   "#4D7C8A",
@@ -132,6 +27,13 @@ export const taskGroupColorPresets = [
   "#B04A5A",
   "#526D9B",
 ] as const;
+
+export function taskGroupDisplayName(name: string, limit = 8): string {
+  const characters = Array.from(name);
+  return characters.length <= limit
+    ? name
+    : `${characters.slice(0, limit).join("")}…`;
+}
 
 export function normalizeTaskGroupColor(value: string): string | null {
   const normalized = value.trim().toUpperCase();
@@ -222,7 +124,6 @@ export function projectTaskBoard(input: ProjectTaskBoardInput): TaskBoardProject
   const orderedRows = view === "tasks" ? taskRowsByRank(tasks) : taskTreeRows(tasks);
   const matchedRows = orderedRows.filter(
     ({ task }) =>
-      (filters.temperature === "all" || task.temperature === filters.temperature) &&
       (filters.status === "all" || task.status === filters.status) &&
       matchesTaskGroupFilter(task, filters.group) &&
       matchesTagKeyword(task.tags, filters.tag) &&
@@ -250,7 +151,6 @@ export function projectTaskBoard(input: ProjectTaskBoardInput): TaskBoardProject
     : visibleRows;
   const visibleTasks = matchedRows.map(({ task }) => task);
   const filterActive =
-    filters.temperature !== "all" ||
     filters.status !== "all" ||
     filters.group !== "all" ||
     Boolean(filters.tag.trim()) ||

@@ -36,8 +36,8 @@ describe("application navigation controller", () => {
       "/tasks",
       "?group=workspace&temperature=hot",
       state,
-    )).toEqual({ ...stored, group: "workspace", temperature: "hot" });
+    )).toEqual({ ...stored, group: "workspace", temperature: "all" });
     expect(state.preserved).toBe(true);
-    expect(taskGroupPath("workspace", "hot")).toBe("/tasks?group=workspace&temperature=hot");
+    expect(taskGroupPath("workspace", "hot")).toBe("/tasks?group=workspace");
   });
 });

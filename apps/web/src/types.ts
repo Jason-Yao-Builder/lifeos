@@ -16,6 +16,8 @@ export interface TaskScoreDimensions {
 
 export interface TaskEvent {
   id: string;
+  batchId?: string;
+  type?: string;
   taskId: string;
   field: string;
   oldValue: unknown;

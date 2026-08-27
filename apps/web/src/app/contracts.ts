@@ -38,12 +38,6 @@ export interface TaskGroupNavigationItem {
   count: number;
 }
 
-export interface TemperatureNavigationItem {
-  id: AppTaskFilters["temperature"];
-  label: string;
-  count: number;
-}
-
 export interface AppShellViewModel {
   view: AppView;
   loadState: AppLoadState;
@@ -56,17 +50,12 @@ export interface AppShellViewModel {
   activeTaskCount: number;
   pendingCardCount: number;
   taskGroups: readonly TaskGroupNavigationItem[];
-  temperatures: readonly TemperatureNavigationItem[];
   selectedTaskGroup: TaskGroupNavigationItem | undefined;
 }
 
 export interface AppShellActions {
   navigate(view: AppView, replace?: boolean): void;
   navigateToTaskGroup(group: AppTaskFilters["group"], filters?: AppTaskFilters): void;
-  navigateToTaskTemperature(
-    temperature: AppTaskFilters["temperature"],
-    filters?: AppTaskFilters,
-  ): void;
   changeTaskFilters(filters: AppTaskFilters): void;
   openAi(): void;
   openRules(): void;

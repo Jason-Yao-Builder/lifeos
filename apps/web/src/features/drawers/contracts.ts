@@ -1,4 +1,5 @@
 import type { LifeOSApi } from "../../api";
+import type { TaskEditorPlaceholders } from "../../app/preferences";
 import type {
   AiCard,
   Goal,
@@ -12,10 +13,16 @@ export type TaskDrawerTab = "details" | "structure" | "history";
 
 export interface TaskDrawerProps {
   task: Task | null;
+  mode?: "edit" | "create-task" | "create-subtask";
+  active?: boolean;
+  presentation?: "overlay" | "rail";
+  placeholders?: TaskEditorPlaceholders;
   api: LifeOSApi;
   onClose: () => void;
   onSave: (task: Task, patch: UpdateTask) => Promise<void>;
   onOpenTask: (taskId: string) => void;
+  onCreateSubtask: (parent: Task) => void;
+  onDismissAll?: () => void;
   allTasks: Task[];
   goals: Goal[];
   taskGroups: TaskGroup[];
@@ -28,11 +35,13 @@ export interface TaskStructureProps {
   api: LifeOSApi;
   allTasks: Task[];
   onOpenTask: (taskId: string, targetTab: Extract<TaskDrawerTab, "details" | "structure">) => void;
+  onCreateSubtask: (parent: Task) => void;
   onChanged: () => Promise<void>;
 }
 
 export interface AiDrawerProps {
   open: boolean;
+  presentation?: "overlay" | "rail";
   cards: AiCard[];
   degraded: boolean;
   demoMode: boolean;

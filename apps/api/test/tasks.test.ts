@@ -45,7 +45,12 @@ describe('task API', () => {
       url: `/api/v1/tasks/${created.id}/events`,
     });
     expect(events.statusCode).toBe(200);
-    expect(events.json().items).toEqual(
+    const eventItems = events.json().items as Array<{
+      batchId: string;
+      field: string;
+      type: string;
+    }>;
+    expect(eventItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           taskId: created.id,
@@ -56,6 +61,9 @@ describe('task API', () => {
         }),
       ]),
     );
+    const creationEvents = eventItems.filter((event) => event.type === 'task.created');
+    expect(creationEvents.length).toBeGreaterThan(1);
+    expect(new Set(creationEvents.map((event) => event.batchId)).size).toBe(1);
 
     const removed = await harness.app.inject({
       method: 'DELETE',

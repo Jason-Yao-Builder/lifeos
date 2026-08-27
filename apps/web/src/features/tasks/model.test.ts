@@ -32,7 +32,7 @@ const project = (overrides: Partial<ProjectTaskBoardInput> = {}) => projectTaskB
 });
 
 describe("task board projection", () => {
-  it("intersects filters before projecting queue sections", () => {
+  it("ignores retired temperature filters while applying active filters", () => {
     const matching = task({
       id: "matching",
       title: "匹配任务",
@@ -67,7 +67,7 @@ describe("task board projection", () => {
       },
     });
 
-    expect(result.visibleTasks.map(({ id }) => id)).toEqual(["matching"]);
+    expect(result.visibleTasks.map(({ id }) => id)).toEqual(["matching", "warm"]);
     expect(result.queueSections).toHaveLength(1);
     expect(result.queueSections[0]?.key).toBe("due_today");
     expect(result.canReorder).toBe(false);

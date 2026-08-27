@@ -38,7 +38,10 @@ import {
   moveTimespan,
   passedPointerDragThreshold,
   projectGanttTree,
+  taskDropPosition,
+  taskHierarchyReorderAnchor,
 } from "./v02-utils";
+import type { TaskDropPosition } from "./v02-utils";
 
 type Scale = GanttScale;
 type DragOperation = GanttDragOperation;
@@ -62,6 +65,28 @@ interface ActiveGanttDrag {
   origin: string;
   taskStart: string;
   taskEnd: string;
+}
+
+interface GanttRowDropTarget {
+  id: string;
+  position: TaskDropPosition;
+}
+
+export function ganttReorderScope(tasks: readonly GanttTask[], sourceId: string): string[] {
+  const source = tasks.find((task) => task.id === sourceId);
+  if (!source) return [];
+  const parentId = source.parentTaskId ?? null;
+  return tasks
+    .filter((task) => (task.parentTaskId ?? null) === parentId)
+    .map((task) => task.id);
+}
+
+export function ganttReorderAnchor(
+  tasks: readonly GanttTask[],
+  sourceId: string,
+  targetId: string,
+): string | null {
+  return taskHierarchyReorderAnchor(tasks as GanttTask[], sourceId, targetId);
 }
 
 function shortDate(value: string): string {
@@ -101,11 +126,17 @@ export interface GanttViewProps {
   taskRevision: string;
   onOpen: (task: Task) => void;
   onTaskSaved: (task: Task) => void;
+  onReorder?: (
+    sourceId: string,
+    targetId: string,
+    position: TaskDropPosition,
+    scopeIds: string[],
+  ) => Promise<void>;
   onToast: (message: string) => void;
   onViewChange?: (view: TaskViewKind) => void;
 }
 
-export function GanttView({ api, goals, taskRevision, onOpen, onTaskSaved, onToast, onViewChange }: GanttViewProps): ReactElement {
+export function GanttView({ api, goals, taskRevision, onOpen, onTaskSaved, onReorder, onToast, onViewChange }: GanttViewProps): ReactElement {
   const { viewModel, actions } = useGanttController({ api, taskRevision, onTaskSaved, onToast });
   const {
     today, rangeStart, end, scale, goalId, data, groups, usedGroups,
@@ -185,6 +216,7 @@ export function GanttView({ api, goals, taskRevision, onOpen, onTaskSaved, onToa
           onToggleCollapse={actions.toggleTask}
           onOpen={onOpen}
           onMove={actions.moveTask}
+          onReorder={onReorder}
         />
         )}
         <footer className="gantt-legend">
@@ -211,7 +243,7 @@ export function GanttView({ api, goals, taskRevision, onOpen, onTaskSaved, onToa
         {usedGroups.length > 0 && <span>深色为已完成进度，浅色为剩余时段</span>}
         <span><i className="critical" />关键路径</span>
         <span><i className="blocked" />被阻塞</span>
-        <span>未分组沿用温度色；拖动中间平移，拖动两端调整起止</span>
+        <span>拖动中间平移，拖动两端调整起止</span>
         </footer>
       </div>
     </section>
@@ -229,6 +261,7 @@ interface GanttChartProps {
   onToggleCollapse: (taskId: string) => void;
   onOpen: (task: Task) => void;
   onMove: (taskId: string, operation: DragOperation, origin: string, targetDate: string) => Promise<void>;
+  onReorder?: GanttViewProps["onReorder"];
 }
 
 function GanttChart({
@@ -242,6 +275,7 @@ function GanttChart({
   onToggleCollapse,
   onOpen,
   onMove,
+  onReorder,
 }: GanttChartProps): ReactElement {
   const rowHeight = 56;
   const labelWidth = 224;
@@ -262,6 +296,8 @@ function GanttChart({
   const htmlDrag = useRef<ActiveGanttDrag | null>(null);
   const previewRef = useRef<GanttDragPreview | null>(null);
   const [preview, setPreview] = useState<GanttDragPreview | null>(null);
+  const [rowDraggingId, setRowDraggingId] = useState<string | null>(null);
+  const [rowDropTarget, setRowDropTarget] = useState<GanttRowDropTarget | null>(null);
 
   function dragDescriptor(task: GanttTask, rowIndex: number, operation: DragOperation, origin: string): ActiveGanttDrag {
     const taskStart = task.startAt?.slice(0, 10) ?? task.plannedDate?.slice(0, 10) ?? start;
@@ -316,6 +352,47 @@ function GanttChart({
       void onMove(active.task.id, active.operation, active.origin, candidate.targetDate);
     }
   }
+
+  function clearRowDrag(): void {
+    setRowDraggingId(null);
+    setRowDropTarget(null);
+  }
+
+  function resolveRowTarget(sourceId: string, rawTargetId: string): string | null {
+    const anchorId = ganttReorderAnchor(data.tasks, sourceId, rawTargetId);
+    return anchorId && anchorId !== sourceId ? anchorId : null;
+  }
+
+  function commitRowReorder(
+    sourceId: string,
+    rawTargetId: string,
+    position: TaskDropPosition,
+  ): void {
+    const targetId = resolveRowTarget(sourceId, rawTargetId);
+    const scopeIds = ganttReorderScope(data.tasks, sourceId);
+    if (targetId && scopeIds.length > 1) {
+      void onReorder?.(sourceId, targetId, position, scopeIds);
+    }
+    clearRowDrag();
+  }
+
+  function keyboardRowReorder(event: ReactKeyboardEvent, taskId: string): void {
+    if (!onReorder || !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const scopeIds = ganttReorderScope(data.tasks, taskId);
+    const index = scopeIds.indexOf(taskId);
+    if (index < 0) return;
+    const movingUp = event.key === "ArrowUp" || event.key === "Home";
+    const targetId = event.key === "Home"
+      ? scopeIds[0]
+      : event.key === "End"
+        ? scopeIds.at(-1)
+        : movingUp
+          ? scopeIds[index - 1]
+          : scopeIds[index + 1];
+    if (!targetId || targetId === taskId) return;
+    event.preventDefault();
+    void onReorder(taskId, targetId, movingUp ? "before" : "after", scopeIds);
+  }
   return (
     <div className="gantt-scroll">
       <div className="gantt-chart" style={{ width: labelWidth + width }}>
@@ -348,8 +425,54 @@ function GanttChart({
         </div>
         <div className="gantt-body" style={{ height }}>
           {rows.map(({ task, depth, hasChildren }, index) => (
-            <div className="gantt-label" style={{ top: index * rowHeight, width: labelWidth }} key={`label-${task.id}`}>
+            <div
+              className={`gantt-label ${rowDraggingId === task.id ? "is-row-dragging" : ""} ${rowDropTarget?.id === task.id ? `drop-${rowDropTarget.position}` : ""}`}
+              data-gantt-row-id={task.id}
+              style={{ top: index * rowHeight, width: labelWidth }}
+              key={`label-${task.id}`}
+              onDragOver={(event) => {
+                if (!onReorder || !rowDraggingId) return;
+                const targetId = resolveRowTarget(rowDraggingId, task.id);
+                if (!targetId) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                const bounds = event.currentTarget.getBoundingClientRect();
+                setRowDropTarget({
+                  id: targetId,
+                  position: taskDropPosition(event.clientY, bounds.top, bounds.height),
+                });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = rowDraggingId ?? event.dataTransfer.getData("text/gantt-row-id");
+                const bounds = event.currentTarget.getBoundingClientRect();
+                if (sourceId) {
+                  commitRowReorder(
+                    sourceId,
+                    task.id,
+                    taskDropPosition(event.clientY, bounds.top, bounds.height),
+                  );
+                } else clearRowDrag();
+              }}
+            >
               <div className="gantt-label-main" style={{ paddingInlineStart: depth * 16 }}>
+                {onReorder && (
+                  <button
+                    type="button"
+                    className="gantt-row-drag-handle"
+                    draggable
+                    aria-label={`调整 ${task.title} 的上下顺序`}
+                    title="拖动调整上下顺序；方向键也可调整"
+                    onDragStart={(event) => {
+                      setRowDraggingId(task.id);
+                      setRowDropTarget(null);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/gantt-row-id", task.id);
+                    }}
+                    onDragEnd={clearRowDrag}
+                    onKeyDown={(event) => keyboardRowReorder(event, task.id)}
+                  >⋮⋮</button>
+                )}
                 {hasChildren ? (
                   <button
                     type="button"

@@ -7,21 +7,14 @@ export type {
 } from "./contracts";
 export type {
   ProjectTaskBoardInput,
-  QuickAddDraft,
-  ScoreDimensionDraft,
   TaskBoardProjection,
   TaskQueueSection,
 } from "./model";
 export {
-  buildQuickTaskInput,
   buildTaskGroupUpdatePatch,
   claimParentInheritance,
-  createScoreDimensionDraft,
-  createScoreEditorState,
   matchesTaskGroupFilter,
-  normalizeScoreDimensionDraft,
   normalizeTaskGroupColor,
-  parseScoreDimensionDraftValue,
   projectTaskBoard,
   taskCompletionMotionDuration,
   taskCompletionMotionDurations,

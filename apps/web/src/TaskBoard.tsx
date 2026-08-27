@@ -1,29 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type {
   CSSProperties,
-  FormEvent,
-  KeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
-import type {
-  TaskGroup,
-  TaskScoreDimensions,
-  TaskStatus,
-  Temperature,
-} from "./types";
+import type { TaskGroup, TaskStatus } from "./types";
 import { taskTargetDate } from "./v02-utils";
 import type { TaskTimeFilter } from "./v02-utils";
 import {
-  calculateCompositeScore,
   formatLongDate,
   formatShortDate,
-  mergeTags,
   openDatePicker,
-  shouldCommitTagKey,
   statusLabels,
   statusTransitions,
-  temperatureLabels,
 } from "./utils";
 import type {
   TaskBoardProps,
@@ -31,23 +20,15 @@ import type {
   TaskRowRendererProps,
 } from "./features/tasks/contracts";
 import {
-  buildQuickTaskInput,
   buildTaskGroupUpdatePatch,
   claimParentInheritance,
-  createScoreDimensionDraft,
-  createScoreEditorState,
-  defaultScoreDimensions,
   matchesTaskGroupFilter,
-  normalizeScoreDimensionDraft,
   normalizeTaskGroupColor,
-  parseScoreDimensionDraftValue,
-  sameScoreDimensions,
-  scoreDimensionFields,
   taskCompletionMotionDuration,
   taskCompletionMotionDurations,
   taskGroupColorPresets,
+  taskGroupDisplayName,
 } from "./features/tasks/model";
-import type { ScoreDimensionDraft } from "./features/tasks/model";
 import {
   taskGroupEditorColor,
   useTaskBoardController,
@@ -60,20 +41,15 @@ export type {
   TaskFilters,
   TaskRowRendererProps,
 } from "./features/tasks/contracts";
-export type { QuickAddDraft, ScoreDimensionDraft } from "./features/tasks/model";
 export {
-  buildQuickTaskInput,
   buildTaskGroupUpdatePatch,
   claimParentInheritance,
-  createScoreDimensionDraft,
-  createScoreEditorState,
   matchesTaskGroupFilter,
-  normalizeScoreDimensionDraft,
   normalizeTaskGroupColor,
-  parseScoreDimensionDraftValue,
   taskCompletionMotionDuration,
   taskCompletionMotionDurations,
   taskGroupColorPresets,
+  taskGroupDisplayName,
 };
 
 export function TaskGroupCreator({
@@ -173,266 +149,18 @@ export function TaskGroupCreator({
 }
 
 function QuickAdd({
-  view,
-  onAdd,
-  taskGroups,
-  onCreateTaskGroup,
-}: Pick<TaskBoardProps, "view" | "onAdd" | "taskGroups" | "onCreateTaskGroup">): ReactElement {
-  const [title, setTitle] = useState("");
-  const [temperature, setTemperature] = useState<Temperature>(
-    view === "today" ? "hot" : "warm",
-  );
-  const [deadline, setDeadline] = useState("");
-  const [groupId, setGroupId] = useState("");
-  const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [manualScore, setManualScore] = useState(false);
-  const [scoreDraft, setScoreDraft] = useState<ScoreDimensionDraft>(() =>
-    createScoreDimensionDraft(defaultScoreDimensions),
-  );
-  const [saving, setSaving] = useState(false);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setTemperature(view === "today" ? "hot" : "warm");
-  }, [view]);
-
-  function commitTags(): void {
-    if (!tagInput.trim()) return;
-    setTags((current) => mergeTags(current, tagInput));
-    setTagInput("");
-  }
-
-  function handleTagKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    const isComposing = event.nativeEvent.isComposing;
-    if (!shouldCommitTagKey(event.key, isComposing)) return;
-    event.preventDefault();
-    commitTags();
-  }
-
-  async function submit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    if (!title.trim()) {
-      setInvalid(true);
-      return;
-    }
-    const normalizedScore = normalizeScoreDimensionDraft(scoreDraft);
-    if (manualScore && !normalizedScore) return;
-    setSaving(true);
-    try {
-      await onAdd(buildQuickTaskInput(view, {
-        title,
-        description,
-        temperature,
-        deadline,
-        groupId,
-        tags,
-        tagInput,
-        manualScore,
-        scoreDimensions: normalizedScore ?? defaultScoreDimensions,
-      }));
-      setTitle("");
-      setDescription("");
-      setDeadline("");
-      setGroupId("");
-      setGroupCreatorOpen(false);
-      setTags([]);
-      setTagInput("");
-      setAdvancedOpen(false);
-      setManualScore(false);
-      setScoreDraft(createScoreDimensionDraft(defaultScoreDimensions));
-      setInvalid(false);
-    } catch {
-      // The caller owns the error message; keeping this state preserves the full draft.
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const scorePreview = normalizeScoreDimensionDraft(scoreDraft);
-
+  onCreateTask,
+}: Pick<TaskBoardProps, "onCreateTask">): ReactElement {
   return (
-    <form
-      className={`quick-add quick-group-layout ${groupCreatorOpen ? "quick-group-creating" : ""} ${advancedOpen ? "has-advanced" : ""} ${invalid ? "is-invalid" : ""}`}
-      onSubmit={submit}
+    <button
+      type="button"
+      className="create-task-button"
+      aria-label="新建任务"
+      title="新建任务"
+      onClick={onCreateTask}
     >
-      <span className="quick-add-plus" aria-hidden="true">＋</span>
-      <input
-        aria-label="新任务标题"
-        value={title}
-        onChange={(event) => {
-          setTitle(event.target.value);
-          if (event.target.value.trim()) setInvalid(false);
-        }}
-        placeholder={view === "today" ? "今天还要完成什么？" : "记下一件事…"}
-      />
-      <select
-        aria-label="新任务温度"
-        className={`temperature-select temperature-${temperature}`}
-        value={temperature}
-        onChange={(event) => setTemperature(event.target.value as Temperature)}
-      >
-        {Object.entries(temperatureLabels).map(([value, label]) => (
-          <option key={value} value={value}>{label}</option>
-        ))}
-      </select>
-      <div className="quick-group-picker">
-        <select
-          aria-label="新任务分组"
-          value={groupId}
-          onChange={(event) => setGroupId(event.target.value)}
-        >
-          <option value="">未分组</option>
-          {taskGroups.map((group) => (
-            <option value={group.id} key={group.id}>{group.name}</option>
-          ))}
-        </select>
-        <button
-          type="button"
-          aria-expanded={groupCreatorOpen}
-          aria-controls="quick-task-group-creator"
-          onClick={() => setGroupCreatorOpen((current) => !current)}
-        >新建分组</button>
-      </div>
-      <label
-        className="quick-date"
-        onPointerDown={(event) => {
-          const input = event.currentTarget.querySelector("input");
-          if (input?.showPicker) event.preventDefault();
-        }}
-        onClick={(event) => {
-          const input = event.currentTarget.querySelector("input");
-          if (input?.showPicker) {
-            event.preventDefault();
-            openDatePicker(input);
-          }
-        }}
-      >
-        <span>截止</span>
-        <input
-          aria-label="新任务截止日"
-          type="date"
-          value={deadline}
-          onChange={(event) => setDeadline(event.target.value)}
-        />
-      </label>
-      <button className="button button-primary" disabled={saving} type="submit">
-        {saving ? "添加中…" : "添加"}
-      </button>
-      <button
-        type="button"
-        className="quick-advanced-toggle"
-        aria-expanded={advancedOpen}
-        aria-controls="quick-add-advanced"
-        onClick={() => setAdvancedOpen((current) => !current)}
-      >
-        高级选项 <span aria-hidden="true">⌄</span>
-      </button>
-      <div className="quick-tag-editor" aria-label="新任务标签">
-        {tags.length > 0 && (
-          <div className="tag-chips" aria-label="已添加的新任务标签">
-            {tags.map((tag) => (
-              <span className="tag-chip" key={tag}>
-                #{tag}
-                <button
-                  type="button"
-                  aria-label={`移除新任务标签 ${tag}`}
-                  onClick={() => setTags((current) => current.filter((item) => item !== tag))}
-                >×</button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="quick-tag-entry">
-          <input
-            aria-label="添加新任务标签"
-            value={tagInput}
-            disabled={tags.length >= 50}
-            placeholder="输入标签后按 Enter 添加"
-            onChange={(event) => setTagInput(event.target.value)}
-            onKeyDown={handleTagKeyDown}
-          />
-        </div>
-        <small aria-live="polite">{tags.length}/50</small>
-      </div>
-      {groupCreatorOpen && (
-        <TaskGroupCreator
-          idPrefix="quick-task-group"
-          variant="quick"
-          onCreate={onCreateTaskGroup}
-          onCreated={(group) => {
-            setGroupId(group.id);
-            setGroupCreatorOpen(false);
-          }}
-          onCancel={() => setGroupCreatorOpen(false)}
-        />
-      )}
-      {advancedOpen && (
-        <section id="quick-add-advanced" className="quick-advanced" aria-label="新任务高级选项">
-          <label className="quick-description" htmlFor="new-task-description">
-            <span>描述</span>
-            <textarea
-              id="new-task-description"
-              rows={3}
-              maxLength={10_000}
-              value={description}
-              placeholder="补充背景、完成标准或下一步…"
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </label>
-          <header>
-            <div>
-              <strong>优先级评分</strong>
-              <small>不启用时由系统自动评分</small>
-            </div>
-            <label className="manual-score-toggle">
-              <input
-                type="checkbox"
-                checked={manualScore}
-                onChange={(event) => setManualScore(event.target.checked)}
-              />
-              手动设定
-            </label>
-          </header>
-          <fieldset className="score-dimension-grid" disabled={!manualScore}>
-            <legend className="sr-only">三维评分与精力成本元数据，每项范围为 0 到 100</legend>
-            {scoreDimensionFields.map(({ key, label, hint }) => (
-              <label key={key} htmlFor={`new-task-score-${key}`}>
-                <span>{label}</span>
-                <small id={`new-task-score-${key}-hint`}>{hint}</small>
-                <input
-                  id={`new-task-score-${key}`}
-                  aria-describedby={`new-task-score-${key}-hint`}
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  required
-                  value={scoreDraft[key]}
-                  onChange={(event) => {
-                    const value = parseScoreDimensionDraftValue(
-                      event.currentTarget.value,
-                      event.currentTarget.valueAsNumber,
-                    );
-                    setScoreDraft((current) => ({ ...current, [key]: value }));
-                  }}
-                />
-              </label>
-            ))}
-          </fieldset>
-          <footer className={manualScore ? "active" : ""} aria-live="polite">
-            <span>{manualScore ? "综合分预览" : "自动评分将在创建后生成"}</span>
-            {manualScore && (
-              <strong>{scorePreview ? calculateCompositeScore(scorePreview) : "—"}</strong>
-            )}
-          </footer>
-        </section>
-      )}
-      {invalid && <span className="field-error">先写下任务名称</span>}
-    </form>
+      <span aria-hidden="true">＋</span>
+    </button>
   );
 }
 
@@ -467,22 +195,8 @@ export function DefaultTaskRow({
   const transitioning = completionMotion !== null;
   const visualDone = done || completionMotion === "exiting" || completionMotion === "entering";
   const displayedStatus = completionMotion === "exiting" ? "completed" : task.status;
-  const [scoreEditorOpen, setScoreEditorOpen] = useState(false);
-  const initialScoreEditorState = createScoreEditorState(
-    task.scoreDimensions,
-    parentTask?.scoreDimensions,
-  );
-  const [scoreDraft, setScoreDraft] = useState<ScoreDimensionDraft>(initialScoreEditorState.draft);
-  const [inheritsParentScore, setInheritsParentScore] = useState(
-    initialScoreEditorState.inheritsParent,
-  );
-  const [scoreSaving, setScoreSaving] = useState(false);
   const [inheritancePending, setInheritancePending] = useState(false);
   const inheritancePendingRef = useRef(false);
-  const [pendingScore, setPendingScore] = useState<{
-    dimensions: TaskScoreDimensions;
-    version: number;
-  } | null>(null);
   const targetDate = taskTargetDate(task);
   const ancestorPath = ancestorTitles.join(" › ");
   const lineageWarning = lineageIssue === "missing"
@@ -500,59 +214,6 @@ export function DefaultTaskRow({
           ? "archived"
         : null;
 
-  useEffect(() => {
-    if (
-      pendingScore &&
-      task.version > pendingScore.version &&
-      sameScoreDimensions(task.scoreDimensions, pendingScore.dimensions)
-    ) {
-      setPendingScore(null);
-      setScoreEditorOpen(false);
-    }
-  }, [pendingScore, task.scoreDimensions, task.version]);
-
-  useEffect(() => {
-    if (!scoreEditorOpen || !inheritsParentScore) return;
-    if (parentTask?.scoreDimensions) {
-      setScoreDraft(createScoreDimensionDraft(parentTask.scoreDimensions));
-    } else {
-      setInheritsParentScore(false);
-    }
-  }, [inheritsParentScore, parentTask?.scoreDimensions, scoreEditorOpen]);
-
-  function openScoreEditor(): void {
-    const initial = createScoreEditorState(task.scoreDimensions, parentTask?.scoreDimensions);
-    setScoreDraft(initial.draft);
-    setInheritsParentScore(initial.inheritsParent);
-    setPendingScore(null);
-    setScoreEditorOpen(true);
-  }
-
-  function cancelScoreEdit(): void {
-    const initial = createScoreEditorState(task.scoreDimensions, parentTask?.scoreDimensions);
-    setScoreDraft(initial.draft);
-    setInheritsParentScore(initial.inheritsParent);
-    setPendingScore(null);
-    setScoreEditorOpen(false);
-  }
-
-  async function saveScore(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    const requested = inheritsParentScore && parentTask?.scoreDimensions
-      ? parentTask.scoreDimensions
-      : normalizeScoreDimensionDraft(scoreDraft);
-    if (!requested) return;
-    setScoreSaving(true);
-    setPendingScore({ dimensions: requested, version: task.version });
-    try {
-      await onUpdate(task, { scoreDimensions: requested });
-    } catch {
-      // The parent reports the failure; this editor intentionally retains the draft.
-    } finally {
-      setScoreSaving(false);
-    }
-  }
-
   async function inheritParent(event: ReactMouseEvent<HTMLButtonElement>): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
@@ -566,15 +227,12 @@ export function DefaultTaskRow({
     }
   }
 
-  const scorePreview = normalizeScoreDimensionDraft(scoreDraft);
-
   return (
     <article
-      className={`task-row task-depth-${depth} ${group ? "task-group-row" : ""} ${hasChildren ? "has-children" : ""} ${task.parentTaskId ? "has-parent" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""} ${scoreEditorOpen ? "score-editor-open" : ""}`}
+      className={`task-row task-depth-${depth} ${group ? "task-group-row" : ""} ${hasChildren ? "has-children" : ""} ${task.parentTaskId ? "has-parent" : ""} ${visualDone ? "is-complete" : ""} ${completionMotion ? `is-completion-${completionMotion}` : ""} ${dragging ? "is-dragging" : ""} ${dropPosition ? `is-drop-${dropPosition}` : ""}`}
       style={group ? ({ "--task-group-color": group.color } as CSSProperties) : undefined}
       data-slot="task-row"
       data-status={task.status}
-      data-temperature={task.temperature}
       data-depth={depth}
       data-grouped={group ? "true" : "false"}
       data-state={completionMotion ?? (visualDone ? "complete" : "active")}
@@ -584,7 +242,7 @@ export function DefaultTaskRow({
       aria-level={depth}
       aria-label={`${task.title}${ancestorPath ? `，隶属 ${ancestorPath}` : ""}${lineageWarning ? `，${lineageWarning}` : ""}${targetDate ? `，目标日期 ${targetDate}` : ""}`}
       aria-busy={transitioning || undefined}
-      draggable={canReorder && !scoreEditorOpen && !transitioning}
+      draggable={canReorder && !transitioning}
       onDragStart={(event) => onDragStart(event, task.id)}
       onDragEnd={onDragEnd}
       onDragOver={(event) => onDragOver(event, task.id)}
@@ -618,7 +276,7 @@ export function DefaultTaskRow({
                 : "标记为已完成"
         }
         title={task.status === "completed" || task.status === "archived" ? "恢复到待办" : undefined}
-        disabled={!actionStatus || transitioning || scoreEditorOpen}
+        disabled={!actionStatus || transitioning}
         onClick={() => actionStatus && void onUpdate(task, { status: actionStatus })}
       >
         {task.status === "todo" || visualDone ? "" : "·"}
@@ -653,7 +311,7 @@ export function DefaultTaskRow({
               }}
             >
               <span aria-hidden="true" />
-              <b>{group.name}</b>
+              <b>{taskGroupDisplayName(group.name)}</b>
             </button>
           )}
         </span>
@@ -697,10 +355,10 @@ export function DefaultTaskRow({
               type="button"
               className="task-inherit-parent"
               disabled={transitioning || inheritancePending}
-              aria-label={`从父任务继承${task.title}的分组、标签与评分`}
+              aria-label={`从父任务继承${task.title}的分组与标签`}
               title={parentTask
-                ? `继承「${parentTask.title}」的分组、标签与评分`
-                : "同步父任务当前的分组、标签与评分"}
+                ? `继承「${parentTask.title}」的分组与标签`
+                : "同步父任务当前的分组与标签"}
               draggable={false}
               onPointerDown={(event) => event.stopPropagation()}
               onDragStart={(event) => {
@@ -715,19 +373,6 @@ export function DefaultTaskRow({
           )}
         </div>
       )}
-      <select
-        aria-label={`${task.title}的温度`}
-        className={`inline-select temperature-${task.temperature}`}
-        value={task.temperature}
-        disabled={transitioning}
-        onChange={(event) =>
-          void onUpdate(task, { temperature: event.target.value as Temperature })
-        }
-      >
-        {Object.entries(temperatureLabels).map(([value, label]) => (
-          <option key={value} value={value}>{label}</option>
-        ))}
-      </select>
       <select
         aria-label={`${task.title}的状态`}
         className="inline-select status-select"
@@ -764,118 +409,6 @@ export function DefaultTaskRow({
           onChange={(event) => void onUpdate(task, { plannedDate: event.target.value || null })}
         />
       </label>
-      <button
-        type="button"
-        className="score score-button"
-        title="点击人工调整综合分"
-        aria-label={`${task.title}的综合分${task.score === null ? "未生成" : ` ${task.score}`}，点击人工调整`}
-        aria-expanded={scoreEditorOpen}
-        aria-controls={`score-editor-${task.id}`}
-        draggable={false}
-        disabled={transitioning}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (scoreEditorOpen) cancelScoreEdit();
-          else openScoreEditor();
-        }}
-      >
-        {task.score === null ? "—" : task.score}
-      </button>
-      {scoreEditorOpen && (
-        <form
-          id={`score-editor-${task.id}`}
-          className="score-editor-panel"
-          aria-label={`人工调整${task.title}的综合分`}
-          onSubmit={(event) => void saveScore(event)}
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onDragStart={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === "Escape" && !scoreSaving) cancelScoreEdit();
-          }}
-        >
-          <header>
-            <div>
-              <strong>人工调整综合分</strong>
-              <small>影响力 40% · 紧迫度 35% · 方向一致性 25%</small>
-            </div>
-            <output aria-live="polite">
-              预览 {scorePreview ? calculateCompositeScore(scorePreview) : "—"}
-            </output>
-          </header>
-          {task.parentTaskId && (
-            <div className="score-inheritance-row">
-              <label className="score-inheritance-toggle">
-                <input
-                  type="checkbox"
-                  checked={inheritsParentScore}
-                  disabled={scoreSaving || !parentTask?.scoreDimensions}
-                  onChange={(event) => {
-                    const inherits = event.currentTarget.checked;
-                    setInheritsParentScore(inherits);
-                    if (inherits && parentTask?.scoreDimensions) {
-                      setScoreDraft(createScoreDimensionDraft(parentTask.scoreDimensions));
-                    }
-                  }}
-                />
-                继承父任务数值
-              </label>
-              <small>
-                {parentTask?.scoreDimensions
-                  ? inheritsParentScore
-                    ? `当前继承「${parentTask.title}」，取消勾选后可自定义`
-                    : `可重新采用「${parentTask.title}」的评分`
-                  : "父任务尚无维度评分，暂不可继承"}
-              </small>
-            </div>
-          )}
-          <fieldset className="score-dimension-grid" disabled={scoreSaving || inheritsParentScore}>
-            <legend className="sr-only">三维评分与精力成本元数据，每项范围为 0 到 100</legend>
-            {scoreDimensionFields.map(({ key, label, hint }) => (
-              <label key={key} htmlFor={`task-${task.id}-score-${key}`}>
-                <span>{label}</span>
-                <input
-                  id={`task-${task.id}-score-${key}`}
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  required
-                  value={scoreDraft[key]}
-                  onChange={(event) => {
-                    const value = parseScoreDimensionDraftValue(
-                      event.currentTarget.value,
-                      event.currentTarget.valueAsNumber,
-                    );
-                    setScoreDraft((current) => ({ ...current, [key]: value }));
-                  }}
-                />
-                <small>{hint}</small>
-              </label>
-            ))}
-          </fieldset>
-          <footer>
-            <span className="score-editor-status" aria-live="polite">
-              {scoreSaving
-                ? "正在保存…"
-                : pendingScore
-                  ? "未确认保存，输入已保留"
-                  : inheritsParentScore
-                    ? "保存后采用父任务当前的维度分"
-                    : "精力成本不参与综合分"}
-            </span>
-            <div>
-              <button type="button" className="button button-secondary" disabled={scoreSaving} onClick={cancelScoreEdit}>取消</button>
-              <button type="submit" className="button button-primary" disabled={scoreSaving}>保存分数</button>
-            </div>
-          </footer>
-        </form>
-      )}
       {hasChildren && <span className="sr-only">包含子任务</span>}
     </article>
   );
@@ -886,13 +419,11 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
     view,
     tasks,
     allTasks,
-    taskGroups,
     filters,
     tags,
     onViewChange,
     onFiltersChange,
-    onAdd,
-    onCreateTaskGroup,
+    onCreateTask,
     onUpdate,
     onInheritParent,
     onOpen,
@@ -963,7 +494,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
           <p className="board-subtitle">
             {view === "today"
               ? `完成 ${completed} / ${tasks.length}，把注意力留给当下`
-              : `共 ${tasks.length} 项，${tasks.filter((task) => task.temperature === "hot").length} 项正在热区`}
+              : `共 ${tasks.length} 项`}
           </p>
         </div>
         {view === "today" && (
@@ -978,10 +509,7 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
       </header>
 
       <QuickAdd
-        view={view}
-        taskGroups={taskGroups}
-        onAdd={onAdd}
-        onCreateTaskGroup={onCreateTaskGroup}
+        onCreateTask={onCreateTask}
       />
 
       <div className="filter-bar">
@@ -1087,10 +615,8 @@ export function TaskBoard(props: TaskBoardProps): ReactElement {
             <span />
             <span />
             <span>任务</span>
-            <span>温度</span>
             <span>状态</span>
             <span>日期</span>
-            <span>分数</span>
           </div>
           <div
             className={`task-tree ${view === "tasks" ? "is-grouped" : ""}`}
