@@ -117,6 +117,44 @@ export const DailySummaryBodySchema = z
   .object({ date: LocalDateSchema.optional() })
   .strict();
 
+const AvailabilityWindowSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  start: DateTimeSchema,
+  end: DateTimeSchema,
+}).strict();
+
+export const AdaptivePlanBodySchema = z.object({
+  windows: z.array(AvailabilityWindowSchema).min(1).max(31),
+  allowedTaskIds: z.array(EntityIdSchema).max(500)
+    .refine((ids) => new Set(ids).size === ids.length, 'Task ids must be unique')
+    .optional(),
+  durationHistory: z.array(z.object({
+    estimatedMinutes: z.number().int().positive().max(525_600),
+    actualMinutes: z.number().int().positive().max(525_600),
+  }).strict()).max(1_000).optional(),
+  previousAssignments: z.array(z.object({
+    taskId: EntityIdSchema,
+    start: DateTimeSchema,
+    end: DateTimeSchema,
+  }).strict()).max(500).optional(),
+  freezeBefore: DateTimeSchema.optional(),
+  defaultEstimatedMinutes: z.number().int().min(5).max(1_440).optional(),
+  createCard: z.boolean().default(true),
+}).strict();
+
+export const TaskBreakdownBodySchema = z.object({
+  parentTaskId: EntityIdSchema,
+  parentVersion: z.number().int().positive(),
+  objective: z.string().trim().min(1).max(1_000),
+  subtasks: z.array(z.object({
+    clientId: z.string().trim().min(1).max(100),
+    title: z.string().trim().min(1).max(200),
+    definitionOfDone: z.string().trim().min(1).max(1_000),
+    estimatedMinutes: z.number().int().min(5).max(240),
+    dependsOn: z.array(z.string().trim().min(1).max(100)).max(12).optional(),
+  }).strict()).min(2).max(12),
+}).strict();
+
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 export const RuleListQuerySchema = z
   .object({ enabled: z.enum(['true', 'false']).transform((value) => value === 'true').optional() })

@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+  compileAdaptivePlan,
+  compileTaskBreakdown,
+  evaluateDurationMemory,
+  type PlanDependency,
+} from '@lifeos/ai';
 import { dateTimeToLocalDate } from '@lifeos/domain';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -11,10 +17,12 @@ import {
   tasksForAiContext,
 } from '../http.js';
 import {
+  AdaptivePlanBodySchema,
   AiDailySummarySchema,
   AiTaskScoresSchema,
   DailySummaryBodySchema,
   ScoreTasksBodySchema,
+  TaskBreakdownBodySchema,
 } from '../schemas.js';
 import type { AppDependencies } from '../services.js';
 
@@ -106,6 +114,109 @@ export function aiRoutes(
       const date = body.date ?? dateTimeToLocalDate(dependencies.now().toISOString(), timeZone);
       return generateDailySummary(dependencies, date, request.id);
     });
+
+    app.post('/ai/plan-preview', { schema: docs('Compile a safe adaptive schedule proposal', ['ai']) }, async (request) => {
+      const body = parseWith(AdaptivePlanBodySchema, request.body);
+      const tasks = await dependencies.store.tasks.list({ tenantId: dependencies.tenantId, limit: 500 });
+      if (body.allowedTaskIds) {
+        const knownIds = new Set(tasks.map((task) => task.id));
+        const unknownId = body.allowedTaskIds.find((id) => !knownIds.has(id));
+        if (unknownId) throw new ResourceNotFoundError('task', unknownId);
+      }
+      const taskDependencies = collectDependencies(dependencies, tasks.map((task) => task.id));
+      const observedHistory = body.durationHistory ?? tasks.flatMap((task) =>
+        task.status === 'completed' && task.estimatedMinutes && task.actualMinutes > 0
+          ? [{ estimatedMinutes: task.estimatedMinutes, actualMinutes: task.actualMinutes }]
+          : [],
+      );
+      const memoryEvaluation = evaluateDurationMemory(observedHistory);
+      const input = {
+        now: dependencies.now().toISOString(),
+        tasks,
+        dependencies: taskDependencies,
+        windows: body.windows,
+        ...(body.allowedTaskIds ? { allowedTaskIds: body.allowedTaskIds } : {}),
+        ...(memoryEvaluation.status === 'promoted'
+          ? { durationHistory: observedHistory.slice(0, memoryEvaluation.evidenceCount) }
+          : {}),
+        ...(body.previousAssignments ? { previousAssignments: body.previousAssignments } : {}),
+        ...(body.freezeBefore ? { freezeBefore: body.freezeBefore } : {}),
+        ...(body.defaultEstimatedMinutes
+          ? { defaultEstimatedMinutes: body.defaultEstimatedMinutes }
+          : {}),
+      };
+      const run = await dependencies.store.aiRuns.start({
+        tenantId: dependencies.tenantId,
+        purpose: 'adaptive-plan-preview',
+        provider: 'deterministic',
+        model: 'lifeos-adaptive-scheduler-v1',
+        input,
+      });
+      try {
+        const proposal = compileAdaptivePlan(input);
+        const card = dependencies.store.transaction((store) => {
+          const created = body.createCard
+            ? store.cards.create({
+                tenantId: dependencies.tenantId,
+                aiRunId: run.id,
+                type: proposal.status === 'ready' ? 'action' : 'observation',
+                title: proposal.status === 'ready' ? '自适应日程待确认' : '当前日程不可行',
+                body: proposal.explanation,
+                proposal,
+              }, { type: 'ai', correlationId: request.id })
+            : null;
+          store.aiRuns.complete(
+            dependencies.tenantId,
+            run.id,
+            { proposal, cardId: created?.id ?? null, memoryEvaluation },
+            proposal.explanation,
+          );
+          return created;
+        });
+        return { runId: run.id, proposal, memoryEvaluation, card };
+      } catch (error) {
+        await dependencies.store.aiRuns.fail(dependencies.tenantId, run.id, String(error));
+        throw aiUnavailable(error);
+      }
+    });
+
+    app.post('/ai/breakdown-preview', { schema: docs('Compile a task breakdown proposal', ['ai']) }, async (request) => {
+      const body = parseWith(TaskBreakdownBodySchema, request.body);
+      const parent = await dependencies.store.tasks.get(dependencies.tenantId, body.parentTaskId);
+      if (!parent) throw new ResourceNotFoundError('task', body.parentTaskId);
+      const run = await dependencies.store.aiRuns.start({
+        tenantId: dependencies.tenantId,
+        purpose: 'task-breakdown-preview',
+        provider: 'proposal-compiler',
+        model: 'lifeos-breakdown-gate-v1',
+        input: body,
+      });
+      try {
+        const proposal = compileTaskBreakdown(parent, body);
+        const card = dependencies.store.transaction((store) => {
+          const created = store.cards.create({
+            tenantId: dependencies.tenantId,
+            targetTaskId: parent.id,
+            aiRunId: run.id,
+            type: proposal.status === 'ready' ? 'action' : 'observation',
+            title: proposal.status === 'ready' ? '任务拆解待确认' : '任务拆解需要修正',
+            body: proposal.explanation,
+            proposal,
+          }, { type: 'ai', correlationId: request.id });
+          store.aiRuns.complete(
+            dependencies.tenantId,
+            run.id,
+            { proposal, cardId: created.id },
+            proposal.explanation,
+          );
+          return created;
+        });
+        return { runId: run.id, proposal, card };
+      } catch (error) {
+        await dependencies.store.aiRuns.fail(dependencies.tenantId, run.id, String(error));
+        throw aiUnavailable(error);
+      }
+    });
   };
   return plugin;
 }
@@ -123,6 +234,21 @@ function assertScoresMatchTasks(
   ) {
     throw new Error('AI score task ids do not match the request');
   }
+}
+
+function collectDependencies(
+  dependencies: Required<Pick<AppDependencies, 'store' | 'tenantId'>>,
+  taskIds: readonly string[],
+): PlanDependency[] {
+  const edges = new Map<string, PlanDependency>();
+  for (const taskId of taskIds) {
+    const listed = dependencies.store.dependencies.listForTask(dependencies.tenantId, taskId);
+    for (const item of [...listed.predecessors, ...listed.successors]) {
+      const edge = { predecessorId: item.predecessorId, successorId: item.successorId };
+      edges.set(`${edge.predecessorId}\u0000${edge.successorId}`, edge);
+    }
+  }
+  return [...edges.values()];
 }
 
 async function generateDailySummary(
